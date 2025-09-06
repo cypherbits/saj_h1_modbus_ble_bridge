@@ -5,7 +5,7 @@ ESPHome external component that exposes the SAJ H1-*-S2 inverter Modbus register
 Designed for inverters that only provide local Bluetooth access (no LAN API) so you can query them from Home Assistant or any Modbus/TCP client (Node-RED, Python, etc.).
 
 ## Status / Compatibility
-Tested with ESPHome 2025.6.3 and 2025.7.5
+Tested with ESPHome 2025.6.3, 2025.7.5, 2025.8.3
 Tested on both Arduino and ESP-IDF variants (ESP32).  
 Not validated together with other active BLE clients; feedback welcome.
 
