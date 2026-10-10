@@ -2,7 +2,6 @@
 #include "esphome/core/log.h"
 #include <array>
 #include <unistd.h>
-#include <sys/ioctl.h>
 
 namespace esphome {
 namespace modbus_ble_bridge {
@@ -154,18 +153,17 @@ void ModbusBleBridge::loop() {
 void ModbusBleBridge::handle_modbus_tcp() {
   int avail = 0;
   if (this->client_fd_ >= 0) {
-    uint8_t tmp[1];
-    int r = ::recv(this->client_fd_, (char*)tmp, 1, MSG_PEEK | MSG_DONTWAIT);
-    if (r > 0) {
-      int bytes = 0;
-      if (ioctl(this->client_fd_, FIONREAD, &bytes) == 0) avail = bytes; else avail = r;
-    } else if (r == 0) {
+    // Peek (without consuming) up to a full frame to learn how many bytes are
+    // buffered. Using the peeked length instead of ioctl(FIONREAD) avoids
+    // depending on FIONREAD's byte count and never consumes a partial frame.
+    uint8_t peek_buf[MIN_TCP_FRAME];
+    int r = ::recv(this->client_fd_, (char*)peek_buf, sizeof(peek_buf), MSG_PEEK | MSG_DONTWAIT);
+    if (r == 0) {
       ESP_LOGI(TAG, "TCP client closed by peer");
       this->close_client_();
       return;
-    } else {
-      avail = 0;
     }
+    avail = (r > 0) ? r : 0;
   }
   if (!avail) return;
 
