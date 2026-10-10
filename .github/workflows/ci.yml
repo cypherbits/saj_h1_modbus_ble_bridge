@@ -24,6 +24,11 @@ jobs:
         # Supported ESPHome versions. Add new releases here as support grows.
         esphome-version:
           - "2025.9.3"
+          - "2025.10.4"
+          - "2025.11.5"
+          - "2025.12.7"
+          - "2026.1.5"
+          - "2026.2.4"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
