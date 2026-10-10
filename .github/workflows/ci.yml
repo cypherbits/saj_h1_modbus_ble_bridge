@@ -37,7 +37,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: platformio-${{ runner.os }}-${{ matrix.esphome-version }}-${{ hashFiles('tests/test.yaml') }}
+          key: platformio-${{ runner.os }}-${{ matrix.esphome-version }}-${{ hashFiles('tests/*.yaml') }}
           restore-keys: |
             platformio-${{ runner.os }}-${{ matrix.esphome-version }}-
 
@@ -46,11 +46,15 @@ jobs:
 
       - name: Validate configuration
         id: validate
-        run: esphome config tests/test.yaml
+        run: |
+          esphome config tests/test.yaml
+          esphome config tests/test_no_metrics.yaml
 
       - name: Compile firmware
         id: compile
-        run: esphome compile tests/test.yaml
+        run: |
+          esphome compile tests/test.yaml
+          esphome compile tests/test_no_metrics.yaml
 
       - name: Record result
         if: always()

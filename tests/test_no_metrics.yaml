@@ -1,0 +1,36 @@
+# Minimal ESPHome device used by CI to validate the component schema and
+# compile it for ESP32 (ESP-IDF) *without* the optional metric sensors. This
+# exercises the branch where the bridge does not auto-load ESPHome's "sensor"
+# component. It is never flashed; the MAC address is a placeholder so no real
+# dongle or secrets file is required.
+esphome:
+  name: modbus-ble-bridge-nometrics
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: ci-test
+  password: ci-test-password
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components:
+      - modbus_ble_bridge
+
+esp32_ble_tracker:
+
+ble_client:
+  - mac_address: 00:00:00:00:00:00
+    id: test_ble_client
+
+modbus_ble_bridge:
+  ble_client_id: test_ble_client
+  modbus_port: 502
+  # No total_requests/timeouts here: the "sensor" component must not be loaded.

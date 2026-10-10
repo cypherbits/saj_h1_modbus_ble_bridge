@@ -5,9 +5,9 @@ from esphome.components import sensor
 from esphome.components.ble_client import CONF_BLE_CLIENT_ID, BLEClient
 import esphome.components.ble_client as ble_client
 from esphome.config_validation import positive_int
+from esphome.core import CORE
 
 DEPENDENCIES = ["ble_client"]
-AUTO_LOAD = ["network", "sensor"]
 
 modbus_ble_bridge_ns = cg.esphome_ns.namespace("modbus_ble_bridge")
 ModbusBleBridge = modbus_ble_bridge_ns.class_(
@@ -17,6 +17,20 @@ ModbusBleBridge = modbus_ble_bridge_ns.class_(
 CONF_MODBUS_PORT = "modbus_port"
 CONF_TOTAL_REQUESTS = "total_requests"
 CONF_TIMEOUTS = "timeouts"
+
+
+def AUTO_LOAD():
+    # ESPHome's "sensor" component is only needed when at least one metric
+    # sensor is configured. Without metrics the bridge never instantiates a
+    # sensor::Sensor, so skipping the auto-load means its sources are neither
+    # copied nor compiled (and USE_SENSOR stays undefined). ESPHome resolves
+    # AUTO_LOAD after substitutions, so the raw config is available here.
+    # Only skip "sensor" when we positively know no metric is configured;
+    # otherwise fall back to loading it, so metrics can never break.
+    conf = (CORE.raw_config or {}).get("modbus_ble_bridge", {})
+    if isinstance(conf, dict) and CONF_TOTAL_REQUESTS not in conf and CONF_TIMEOUTS not in conf:
+        return ["network"]
+    return ["network", "sensor"]
 
 # When at least one metric is configured we define this flag, which compiles in
 # the metric sensors and their publish calls. Devices that configure none pay no
