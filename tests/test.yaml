@@ -11,9 +11,10 @@ esp32:
 
 logger:
 
-# The bridge checks the network state and serves Modbus/TCP, so a network
-# stack must be present. Dummy credentials are fine: this config is only
-# compiled, never flashed.
+# Realistic device setup: the bridge serves Modbus/TCP over the network.
+# (The component auto-loads the "network" component, so a network stack is
+# not strictly required just to compile.) Dummy credentials are fine: this
+# config is only compiled, never flashed.
 wifi:
   ssid: ci-test
   password: ci-test-password

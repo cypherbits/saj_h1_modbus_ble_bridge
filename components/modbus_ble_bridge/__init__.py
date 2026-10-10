@@ -6,6 +6,7 @@ import esphome.components.ble_client as ble_client
 from esphome.config_validation import positive_int
 
 DEPENDENCIES = ["ble_client"]
+AUTO_LOAD = ["network"]
 
 modbus_ble_bridge_ns = cg.esphome_ns.namespace("modbus_ble_bridge")
 ModbusBleBridge = modbus_ble_bridge_ns.class_(
