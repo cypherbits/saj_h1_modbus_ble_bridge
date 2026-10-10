@@ -50,6 +50,12 @@ void ModbusBleBridge::close_client_() {
     ::close(this->client_fd_);
     this->client_fd_ = -1;
   }
+  // Drop all per-connection state. A request left pending by the previous
+  // connection must never keep the next client waiting, and the late BLE
+  // response it may still receive must not be mistaken for a timeout.
+  this->waiting_message_ = false;
+  this->waiting_since_ = 0;
+  this->errlen_ = 0;
 }
 
 // Send the whole buffer, retrying on short writes and EAGAIN (non-blocking
@@ -350,6 +356,15 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
     }
     case ESP_GATTC_NOTIFY_EVT: {
       if (this->char_read_ == nullptr || param->notify.handle != this->char_read_->handle || this->client_fd_ < 0) {
+        break;
+      }
+      // Only the notification that answers the request we are currently
+      // waiting for may be forwarded to the TCP client. Late (post-timeout) or
+      // unsolicited notifications would otherwise be sent as if they were the
+      // response to the current request, desynchronising the Modbus/TCP
+      // session of whatever connection happens to be open at that moment.
+      if (!this->waiting_message_) {
+        ESP_LOGD(TAG, "Ignoring unsolicited BLE notification (%d bytes)", (int) param->notify.value_len);
         break;
       }
       this->waiting_message_ = false;
