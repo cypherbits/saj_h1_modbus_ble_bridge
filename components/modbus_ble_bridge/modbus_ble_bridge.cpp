@@ -93,6 +93,16 @@ void ModbusBleBridge::send_exception_(uint8_t fn_code, uint8_t exception_code) {
 }
 
 void ModbusBleBridge::loop() {
+  // This component is both an ESPHome Component and a ble_client::BLEClientNode,
+  // so ESPHome drives loop() twice per iteration while the BLE client is active:
+  // once from the scheduler (Component) and once from BLEClient::loop(), which
+  // forwards to every registered node. Keep only the scheduler call: it also runs
+  // while the BLE client is idle and has disabled its own loop, which is what keeps
+  // the Modbus/TCP server alive. The forwarded call is the redundant one.
+  Component *current = App.get_current_component();
+  if (current != nullptr && current != static_cast<Component *>(this))
+    return;
+
   unsigned long now = millis();
   if (!esphome::network::is_connected()) {
     if (now - this->last_wifi_check_ >= 5000) {
