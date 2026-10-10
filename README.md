@@ -6,7 +6,7 @@ Designed for inverters that only provide local Bluetooth access (no LAN API) so 
 
 ## Status / Compatibility
 Compatible with ESPHome 2025.9.x (CI builds against 2025.9.3).
-Tested on ESP32 with the ESP-IDF framework; the Arduino framework is also supported but not covered by CI.  
+Requires the ESP32 **ESP-IDF** framework (Arduino is not supported). The network server is implemented directly on lwIP sockets.  
 Not validated together with other active BLE clients; feedback welcome.
 
 ## Repository Structure
@@ -52,6 +52,11 @@ ble_client:
 modbus_ble_bridge:
   ble_client_id: saj_ble
   modbus_port: 502   # Optional (default 502)
+  # Optional metric sensors (omit all of them for zero overhead):
+  total_requests:
+    name: "Bridge Requests"
+  timeouts:
+    name: "Bridge Timeouts"
 ```
 
 ## 4. Get the data on NodeRed
@@ -60,6 +65,34 @@ Import the `flows_h1s2_full_v10_mqtt.json` file on your node-red.
 
 ## 5. Querying
 Once flashed and connected, the device opens a Modbus/TCP server on the configured port (default 502). Point any Modbus tool at the ESP32 IP. Example (Python `pymodbus` or Node-RED Modbus node).
+
+## Metrics (optional)
+The component can expose a few diagnostic sensors. They are completely optional:
+if none is configured, the metric code is excluded at compile time, so the bridge
+keeps no metric state and performs no extra work.
+
+| Key              | Description                                  |
+| ---------------- | -------------------------------------------- |
+| `total_requests` | Modbus/TCP requests forwarded to the dongle. |
+| `timeouts`       | BLE response timeouts encountered.           |
+
+Each key accepts a standard ESPHome [sensor](https://esphome.io/components/sensor/)
+config (at least `name`). Example:
+
+```yaml
+modbus_ble_bridge:
+  ble_client_id: saj_ble
+  timeouts:
+    name: "Bridge Timeouts"
+```
+
+Notes:
+* The counters (`total_requests`, `timeouts`) are published only when they
+  change, so they add no periodic work.
+* `timeouts` counts BLE response timeouts (the bridge waiting for a notify that
+  never arrived). Frame length errors are reset on success and are not counted.
+* Metrics use ESPHome's standard `sensor` component, which is auto-loaded as a
+dependency of this component.
 
 ## Continuous Integration
 Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`) using the device config in `tests/test.yaml`:
@@ -94,4 +127,3 @@ Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 ## Roadmap / TODO
 * Expose BLE response timeout as a config option.
 * Provide Node-RED example flow.
-* Optional metrics sensors (uptime, error counters) via ESPHome sensors.

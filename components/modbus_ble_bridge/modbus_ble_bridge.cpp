@@ -1,10 +1,8 @@
 #include "modbus_ble_bridge.h"
 #include "esphome/core/log.h"
 #include <algorithm>
-#if !defined(ARDUINO)
 #include <unistd.h>
 #include <sys/ioctl.h>
-#endif
 
 namespace esphome {
 namespace modbus_ble_bridge {
@@ -20,7 +18,30 @@ void ModbusBleBridge::setup() {
   this->modbus_frame_response_.resize(8);
   this->c_ = 0;
   this->total_calls_ = 0;
-  this->total_errors_ = 0;
+  this->total_timeouts_ = 0;
+}
+
+void ModbusBleBridge::note_request_() {
+  this->total_calls_++;
+#ifdef USE_MODBUS_BLE_BRIDGE_METRICS
+  if (this->total_requests_sensor_ != nullptr)
+    this->total_requests_sensor_->publish_state(this->total_calls_);
+#endif
+}
+
+void ModbusBleBridge::note_timeout_() {
+  this->total_timeouts_++;
+#ifdef USE_MODBUS_BLE_BRIDGE_METRICS
+  if (this->timeouts_sensor_ != nullptr)
+    this->timeouts_sensor_->publish_state(this->total_timeouts_);
+#endif
+}
+
+void ModbusBleBridge::close_client_() {
+  if (this->client_fd_ >= 0) {
+    ::close(this->client_fd_);
+    this->client_fd_ = -1;
+  }
 }
 
 void ModbusBleBridge::loop() {
@@ -32,13 +53,6 @@ void ModbusBleBridge::loop() {
     }
     return;
   }
-#if defined(ARDUINO)
-  if (!this->mb_server_) {
-    this->mb_server_ = new WiFiServer(this->modbus_port_);
-    this->mb_server_->begin();
-    ESP_LOGI(TAG, "Modbus TCP server started on port %d", this->modbus_port_);
-  }
-#else
   if (this->server_fd_ < 0) {
     this->server_fd_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     if (this->server_fd_ < 0) {
@@ -65,29 +79,17 @@ void ModbusBleBridge::loop() {
     }
     int flags = fcntl(this->server_fd_, F_GETFL, 0);
     fcntl(this->server_fd_, F_SETFL, flags | O_NONBLOCK);
-    ESP_LOGI(TAG, "Modbus TCP server (ESP-IDF) started on port %d", this->modbus_port_);
+    ESP_LOGI(TAG, "Modbus TCP server started on port %d", this->modbus_port_);
   }
-#endif
 
   if (this->waiting_message_ && this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
-    this->total_errors_++;
+    this->note_timeout_();
     ESP_LOGW(TAG, "BLE response timeout after %u ms (loop). Resetting state.", this->ble_response_timeout_ms_);
     this->waiting_message_ = false;
     this->waiting_since_ = 0;
     ESP_LOGI(TAG, "Closing TCP client due to BLE timeout (loop)");
-#if defined(ARDUINO)
-    if (this->client_ && this->client_.connected()) this->client_.stop();
-#else
-    if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+    this->close_client_();
   }
-#if defined(ARDUINO)
-  if (!this->client_ || !this->client_.connected()) {
-    this->client_ = this->mb_server_->available();
-    if (!this->client_) return;
-    ESP_LOGI(TAG, "Modbus TCP client connected");
-  }
-#else
   if (this->client_fd_ < 0) {
     sockaddr_in caddr{}; socklen_t clen = sizeof(caddr);
     int fd = ::accept(this->server_fd_, (struct sockaddr*)&caddr, &clen);
@@ -95,17 +97,13 @@ void ModbusBleBridge::loop() {
     int cflags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, cflags | O_NONBLOCK);
     this->client_fd_ = fd;
-    ESP_LOGI(TAG, "Modbus TCP client connected (ESP-IDF)");
+    ESP_LOGI(TAG, "Modbus TCP client connected");
   }
-#endif
   this->handle_modbus_tcp();
 }
 
 void ModbusBleBridge::handle_modbus_tcp() {
   int avail = 0;
-#if defined(ARDUINO)
-  avail = this->client_.available();
-#else
   if (this->client_fd_ >= 0) {
     uint8_t tmp[1];
     int r = ::recv(this->client_fd_, (char*)tmp, 1, MSG_PEEK | MSG_DONTWAIT);
@@ -114,12 +112,12 @@ void ModbusBleBridge::handle_modbus_tcp() {
       if (ioctl(this->client_fd_, FIONREAD, &bytes) == 0) avail = bytes; else avail = r;
     } else if (r == 0) {
       ESP_LOGI(TAG, "TCP client closed by peer");
-      ::close(this->client_fd_); this->client_fd_ = -1; return;
+      this->close_client_();
+      return;
     } else {
       avail = 0;
     }
   }
-#endif
   if (!avail) return;
 
   if (this->waiting_message_) {
@@ -129,38 +127,27 @@ void ModbusBleBridge::handle_modbus_tcp() {
       this->last_wait_log_ = now;
     }
     if (this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
-      this->total_errors_++;
+      this->note_timeout_();
       ESP_LOGW(TAG, "BLE response timeout after %u ms. Resetting state.", this->ble_response_timeout_ms_);
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
       ESP_LOGI(TAG, "Closing TCP client due to BLE timeout while waiting");
-#if defined(ARDUINO)
-      if (this->client_ && this->client_.connected()) this->client_.stop();
-#else
-      if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+      this->close_client_();
     }
     return;
   }
 
   ESP_LOGD(TAG, "handle_modbus_tcp: available bytes=%d", avail);
   int i = 0;
-#if defined(ARDUINO)
-  while (this->client_.available() && i < 260) this->modbus_request_[i++] = this->client_.read();
-#else
   if (this->client_fd_ >= 0) {
     int r = ::recv(this->client_fd_, (char*)this->modbus_request_.data(), 260, MSG_DONTWAIT);
     if (r <= 0) return; else i = r;
   }
-#endif
   ESP_LOGD(TAG, "Read %d bytes from Modbus TCP client", i);
   if (i < 12) {
     ESP_LOGW(TAG, "Incomplete Modbus TCP frame: %d bytes, aborting", i);
     return;
   }
-#if defined(ARDUINO)
-  this->client_.flush();
-#endif
   uint8_t fn_code = this->modbus_request_[7];
   uint8_t unit_id = this->modbus_request_[6];
   this->ble_response_buffer_.clear();
@@ -189,7 +176,7 @@ void ModbusBleBridge::handle_modbus_tcp() {
   this->send_ble_request(ble_req);
   this->c_++;
   if (this->c_ > 255) this->c_ = 0;
-  this->total_calls_++;
+  this->note_request_();
   ESP_LOGD(TAG, "BLE request sent, next seq=%d, total_calls=%d", this->c_, this->total_calls_);
   this->waiting_message_ = true;
   this->waiting_since_ = millis();
@@ -244,11 +231,7 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       this->char_write_ = nullptr;
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
-#if defined(ARDUINO)
-      if (this->client_ && this->client_.connected()) this->client_.stop();
-#else
-      if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+      this->close_client_();
       break;
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
@@ -271,13 +254,7 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       break;
     }
     case ESP_GATTC_NOTIFY_EVT: {
-      bool client_ok = false;
-#if defined(ARDUINO)
-      client_ok = (bool)this->client_ && this->client_.connected();
-#else
-      client_ok = this->client_fd_ >= 0;
-#endif
-      if (param->notify.handle != this->char_read_->handle || !client_ok) {
+      if (param->notify.handle != this->char_read_->handle || this->client_fd_ < 0) {
         break;
       }
       this->waiting_message_ = false;
@@ -288,11 +265,7 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       if (this->modbus_frame_response_.size() >= 8 && this->modbus_frame_response_[7] == 6) {
         ESP_LOGI(TAG, "Write command response - flushing client");
         ESP_LOGI(TAG, "Closing TCP client after write single register response");
-#if defined(ARDUINO)
-        this->client_.stop();
-#else
-        if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+        this->close_client_();
         break;
       }
       if (((int)length - 7) != this->total_registers_) {
@@ -301,11 +274,7 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
         if (this->errlen_ > 5) {
           ESP_LOGE(TAG, "Too many length errors (5) - resetting connection");
           ESP_LOGI(TAG, "Closing TCP client due to repeated length errors");
-#if defined(ARDUINO)
-          this->client_.stop();
-#else
-          if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+          this->close_client_();
         } else {
           this->last_ble_msg_ = millis();
         }
@@ -321,18 +290,11 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       combined.insert(combined.end(), this->modbus_frame_response_.begin(), this->modbus_frame_response_.end());
       combined.insert(combined.end(), pData + 7, pData + 7 + longitud + 1);
       ESP_LOGI(TAG, "Sending Modbus/TCP response of %d bytes", combined.size());
-#if defined(ARDUINO)
-      this->client_.write(combined.data(), combined.size());
-      this->client_.stop();
-      ESP_LOGI(TAG, "Closed TCP client after sending Modbus/TCP response");
-#else
       if (this->client_fd_ >= 0) {
         ::send(this->client_fd_, (const char*)combined.data(), combined.size(), 0);
-        ::close(this->client_fd_);
-        this->client_fd_ = -1;
-        ESP_LOGI(TAG, "Closed TCP client after sending Modbus/TCP response (ESP-IDF)");
+        this->close_client_();
+        ESP_LOGI(TAG, "Closed TCP client after sending Modbus/TCP response");
       }
-#endif
       break;
     }
     default:
