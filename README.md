@@ -115,9 +115,10 @@ esphome compile tests/test.yaml
 Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 
 ## Notes / Limitations
-* Designed for simple request/response usage; one TCP request at a time.
+* Serves one TCP client at a time; the connection is kept open to answer multiple sequential requests.
+* Only function code 3 (read holding registers, max 125) and 6 (write single register) are tunnelled. Any other function code, a malformed MBAP header or an invalid register count is answered with a Modbus exception.
+* Writes (FC 6) are acknowledged with the standard Modbus/TCP echo response.
 * The BLE response timeout is currently fixed in code (2s). If needed this can be exposed later via YAML.
-* Writes (FC 6) close the TCP connection immediately after the response (current implementation detail).
 
 ## Troubleshooting
 * If you see "BLE write characteristic not found": ensure you paired the correct dongle MAC.
@@ -127,3 +128,6 @@ Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 ## Roadmap / TODO
 * Expose BLE response timeout as a config option.
 * Provide Node-RED example flow.
+* Avoid the duplicate `loop()` call: the component is both an ESPHome `Component` and a `ble_client::BLEClientNode`, so the scheduler and `BLEClient::loop()` both invoke it each iteration (harmless but redundant). A dedup must keep the Modbus/TCP server running while BLE is idle.
+* Verify on hardware the negotiated BLE MTU. ESPHome negotiates it via ESP-IDF defaults (the reference Arduino firmware hard-set 512); confirm that large multi-register reads (~260-byte notifications) still arrive in a single notification, otherwise expected-length checks may fail.
+* When no metric sensor is configured, avoid pulling in ESPHome's `sensor` component. It is currently auto-loaded (`AUTO_LOAD` cannot be made conditional), even though the bridge's own metric code is excluded by the build flag.

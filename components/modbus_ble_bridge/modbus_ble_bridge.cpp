@@ -1,8 +1,7 @@
 #include "modbus_ble_bridge.h"
 #include "esphome/core/log.h"
-#include <algorithm>
+#include <array>
 #include <unistd.h>
-#include <sys/ioctl.h>
 
 namespace esphome {
 namespace modbus_ble_bridge {
@@ -12,10 +11,19 @@ static constexpr uint16_t BLE_SERVICE = 0xFFFF;
 static constexpr uint16_t BLE_CHAR_READ = 0xFF02;
 static constexpr uint16_t BLE_CHAR_WRITE = 0xFF01;
 
+// MBAP (6) + unit id + function code + address (2) + count/value (2).
+static constexpr size_t MIN_TCP_FRAME = 12;
+static constexpr size_t MAX_TCP_FRAME = 260;
+static constexpr size_t MAX_TCP_RESPONSE = 264;
+static constexpr int MAX_READ_REGISTERS = 125;  // Modbus limit for FC3
+static constexpr uint8_t FC_READ_HOLDING_REGISTERS = 3;
+static constexpr uint8_t FC_WRITE_SINGLE_REGISTER = 6;
+
 void ModbusBleBridge::setup() {
   ESP_LOGI(TAG, "Setting up Modbus BLE Bridge");
-  this->modbus_request_.resize(260);
+  this->modbus_request_.resize(MAX_TCP_FRAME);
   this->modbus_frame_response_.resize(8);
+  this->tcp_response_.reserve(MAX_TCP_RESPONSE);
   this->c_ = 0;
   this->total_calls_ = 0;
   this->total_timeouts_ = 0;
@@ -42,6 +50,46 @@ void ModbusBleBridge::close_client_() {
     ::close(this->client_fd_);
     this->client_fd_ = -1;
   }
+}
+
+// Send the whole buffer, retrying on short writes and EAGAIN (non-blocking
+// socket). Gives up after 1s so the main loop can never block indefinitely.
+bool ModbusBleBridge::send_all_(const uint8_t *data, size_t len) {
+  if (this->client_fd_ < 0)
+    return false;
+  size_t sent = 0;
+  uint32_t start = millis();
+  while (sent < len) {
+    ssize_t n = ::send(this->client_fd_, (const char *) (data + sent), len - sent, 0);
+    if (n > 0) {
+      sent += static_cast<size_t>(n);
+      continue;
+    }
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      if (millis() - start > 1000) {
+        ESP_LOGW(TAG, "TCP send timed out");
+        return false;
+      }
+      delay(1);
+      continue;
+    }
+    if (n < 0 && errno == EINTR)
+      continue;
+    ESP_LOGW(TAG, "TCP send failed: errno=%d", errno);
+    return false;
+  }
+  return true;
+}
+
+// Reply with a Modbus/TCP exception PDU (unit + fn|0x80 + exception code).
+void ModbusBleBridge::send_exception_(uint8_t fn_code, uint8_t exception_code) {
+  if (this->client_fd_ < 0)
+    return;
+  uint8_t exception[9] = {
+      this->modbus_request_[0], this->modbus_request_[1], 0, 0, 0, 3,
+      this->modbus_request_[6], static_cast<uint8_t>(fn_code | 0x80), exception_code};
+  ESP_LOGD(TAG, "Sending Modbus exception 0x%02X for function %u", exception_code, fn_code);
+  this->send_all_(exception, sizeof(exception));
 }
 
 void ModbusBleBridge::loop() {
@@ -105,18 +153,17 @@ void ModbusBleBridge::loop() {
 void ModbusBleBridge::handle_modbus_tcp() {
   int avail = 0;
   if (this->client_fd_ >= 0) {
-    uint8_t tmp[1];
-    int r = ::recv(this->client_fd_, (char*)tmp, 1, MSG_PEEK | MSG_DONTWAIT);
-    if (r > 0) {
-      int bytes = 0;
-      if (ioctl(this->client_fd_, FIONREAD, &bytes) == 0) avail = bytes; else avail = r;
-    } else if (r == 0) {
+    // Peek (without consuming) up to a full frame to learn how many bytes are
+    // buffered. Using the peeked length instead of ioctl(FIONREAD) avoids
+    // depending on FIONREAD's byte count and never consumes a partial frame.
+    uint8_t peek_buf[MIN_TCP_FRAME];
+    int r = ::recv(this->client_fd_, (char*)peek_buf, sizeof(peek_buf), MSG_PEEK | MSG_DONTWAIT);
+    if (r == 0) {
       ESP_LOGI(TAG, "TCP client closed by peer");
       this->close_client_();
       return;
-    } else {
-      avail = 0;
     }
+    avail = (r > 0) ? r : 0;
   }
   if (!avail) return;
 
@@ -137,68 +184,108 @@ void ModbusBleBridge::handle_modbus_tcp() {
     return;
   }
 
+  // Wait until a complete Modbus/TCP frame is buffered. TCP may split the
+  // request across segments; consuming a partial frame would lose the request.
+  if (avail < static_cast<int>(MIN_TCP_FRAME)) return;
+
   ESP_LOGD(TAG, "handle_modbus_tcp: available bytes=%d", avail);
   int i = 0;
   if (this->client_fd_ >= 0) {
-    int r = ::recv(this->client_fd_, (char*)this->modbus_request_.data(), 260, MSG_DONTWAIT);
+    int r = ::recv(this->client_fd_, (char*)this->modbus_request_.data(), MAX_TCP_FRAME, MSG_DONTWAIT);
     if (r <= 0) return; else i = r;
   }
   ESP_LOGD(TAG, "Read %d bytes from Modbus TCP client", i);
-  if (i < 12) {
+  if (i < static_cast<int>(MIN_TCP_FRAME)) {
     ESP_LOGW(TAG, "Incomplete Modbus TCP frame: %d bytes, aborting", i);
     return;
   }
-  uint8_t fn_code = this->modbus_request_[7];
+
   uint8_t unit_id = this->modbus_request_[6];
-  this->ble_response_buffer_.clear();
-  this->expected_frame_len_ = 0;
+  uint8_t fn_code = this->modbus_request_[7];
+  uint16_t mbap_len = (uint16_t(this->modbus_request_[4]) << 8) | this->modbus_request_[5];
+
+  // Only FC3 (read holding registers) and FC6 (write single register) are
+  // tunnelled. Anything else is rejected without touching the inverter.
+  if (fn_code != FC_READ_HOLDING_REGISTERS && fn_code != FC_WRITE_SINGLE_REGISTER) {
+    ESP_LOGW(TAG, "Unsupported function code %u, sending exception", fn_code);
+    this->send_exception_(fn_code, 0x01);  // illegal function
+    return;
+  }
+  // Reject malformed MBAP headers (protocol id must be 0, length must match).
+  if (this->modbus_request_[2] != 0 || this->modbus_request_[3] != 0 || mbap_len != 6) {
+    ESP_LOGW(TAG, "Invalid MBAP header (protocol id / length), sending exception");
+    this->send_exception_(fn_code, 0x03);  // illegal data value
+    return;
+  }
+
   uint8_t addr_hi = this->modbus_request_[8];
   uint8_t addr_lo = this->modbus_request_[9];
   uint8_t reg_hi  = this->modbus_request_[10];
   uint8_t reg_lo  = this->modbus_request_[11];
-  this->requested_regs_ = (uint16_t(reg_hi) << 8) | reg_lo;
-  int num_regs = ((reg_hi << 8) | reg_lo);
-  this->total_registers_ = num_regs * 2 + 3;
-  std::vector<uint8_t> ble_req = {77, 0, static_cast<uint8_t>(c_), 9, 50, unit_id, fn_code, addr_hi, addr_lo, reg_hi, reg_lo};
-  uint16_t crc = this->modrtu_crc(ble_req.data() + 5, 6);
-  ble_req.push_back(crc & 0xFF);
-  ble_req.push_back((crc >> 8) & 0xFF);
-  int total_regs = this->total_registers_;
-  this->modbus_frame_response_[0] = this->modbus_request_[0];
-  this->modbus_frame_response_[1] = this->modbus_request_[1];
-  this->modbus_frame_response_[2] = this->modbus_request_[2];
-  this->modbus_frame_response_[3] = this->modbus_request_[3];
-  this->modbus_frame_response_[4] = (total_regs & 0xFF00) >> 8;
-  this->modbus_frame_response_[5] = total_regs & 0xFF;
-  this->modbus_frame_response_[6] = unit_id;
+
+  if (fn_code == FC_READ_HOLDING_REGISTERS) {
+    int num_regs = (int(reg_hi) << 8) | reg_lo;
+    if (num_regs < 1 || num_regs > MAX_READ_REGISTERS) {
+      ESP_LOGW(TAG, "Invalid register count %d, sending exception", num_regs);
+      this->send_exception_(fn_code, 0x03);  // illegal data value
+      return;
+    }
+    this->total_registers_ = num_regs * 2 + 3;
+  }
+
+  // Always record the pending function code so the notify handler can tell a
+  // read response from a write acknowledgement.
   this->modbus_frame_response_[7] = fn_code;
-  ESP_LOGD(TAG, "Sending BLE request of %d bytes (seq=%d)", ble_req.size(), this->c_);
-  this->send_ble_request(ble_req);
-  this->c_++;
-  if (this->c_ > 255) this->c_ = 0;
+  if (fn_code == FC_READ_HOLDING_REGISTERS) {
+    int total_regs = this->total_registers_;
+    this->modbus_frame_response_[0] = this->modbus_request_[0];
+    this->modbus_frame_response_[1] = this->modbus_request_[1];
+    this->modbus_frame_response_[2] = this->modbus_request_[2];
+    this->modbus_frame_response_[3] = this->modbus_request_[3];
+    this->modbus_frame_response_[4] = static_cast<uint8_t>((total_regs >> 8) & 0xFF);
+    this->modbus_frame_response_[5] = static_cast<uint8_t>(total_regs & 0xFF);
+    this->modbus_frame_response_[6] = unit_id;
+  }
+
+  uint8_t seq = static_cast<uint8_t>(this->c_);
+  std::array<uint8_t, 13> ble_req = {77, 0, seq, 9, 50, unit_id, fn_code, addr_hi, addr_lo, reg_hi, reg_lo};
+  uint16_t crc = this->modrtu_crc(ble_req.data() + 5, 6);
+  ble_req[11] = static_cast<uint8_t>(crc & 0xFF);
+  ble_req[12] = static_cast<uint8_t>((crc >> 8) & 0xFF);
+
+  ESP_LOGD(TAG, "Sending BLE request of %d bytes (seq=%d)", (int) ble_req.size(), this->c_);
+  if (!this->send_ble_request(ble_req.data(), ble_req.size())) {
+    ESP_LOGW(TAG, "Could not forward request to dongle, sending exception");
+    this->send_exception_(fn_code, 0x0B);  // gateway target device failed to respond
+    return;
+  }
+  this->c_ = (this->c_ + 1) & 0xFF;
   this->note_request_();
-  ESP_LOGD(TAG, "BLE request sent, next seq=%d, total_calls=%d", this->c_, this->total_calls_);
   this->waiting_message_ = true;
   this->waiting_since_ = millis();
   this->last_wait_log_ = 0;
 }
 
-void ModbusBleBridge::send_ble_request(const std::vector<uint8_t> &request) {
-  ESP_LOGD(TAG, "send_ble_request invoked, size=%d", request.size());
-  if (!this->parent_ || !this->parent_->connected()) {
+bool ModbusBleBridge::send_ble_request(uint8_t *data, size_t len) {
+  ESP_LOGD(TAG, "send_ble_request invoked, size=%d", (int) len);
+  if (this->parent_ == nullptr || !this->parent_->connected()) {
     ESP_LOGW(TAG, "BLE not connected when attempting to send request");
-    return;
+    return false;
   }
-  if (!this->char_write_) {
+  if (this->char_write_ == nullptr) {
     this->char_write_ = this->parent_->get_characteristic(BLE_SERVICE, BLE_CHAR_WRITE);
-    if (!this->char_write_) {
+    if (this->char_write_ == nullptr) {
       ESP_LOGE(TAG, "BLE write characteristic not found");
-      return;
+      return false;
     }
     ESP_LOGD(TAG, "BLE write characteristic acquired");
   }
-  this->char_write_->write_value((uint8_t*)request.data(), request.size(), ESP_GATT_WRITE_TYPE_NO_RSP);
-  ESP_LOGD(TAG, "BLE request sent successfully");
+  esp_err_t err = this->char_write_->write_value(data, static_cast<int16_t>(len), ESP_GATT_WRITE_TYPE_NO_RSP);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "BLE write_value failed, status=%d", err);
+    return false;
+  }
+  return true;
 }
 
 void ModbusBleBridge::dump_config() {
@@ -214,15 +301,13 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       ESP_LOGI(TAG, "[gattc_event_handler] ESP_GATTC_OPEN_EVT");
       if (param->open.status == ESP_GATT_OK) {
         ESP_LOGI(TAG, "Connected successfully!");
-        esp_err_t mtu_err = esp_ble_gattc_send_mtu_req(gattc_if, param->open.conn_id);
-        if (mtu_err) ESP_LOGW(TAG, "MTU request failed, status=%d", mtu_err);
       } else {
         ESP_LOGW(TAG, "Connection failed, status=%d", param->open.status);
       }
       break;
     }
     case ESP_GATTC_CFG_MTU_EVT: {
-      ESP_LOGI(TAG, "[gattc_event_handler] ESP_GATTC_CFG_MTU_EVT: MTU updated to %d", param->cfg_mtu.mtu);
+      ESP_LOGD(TAG, "[gattc_event_handler] ESP_GATTC_CFG_MTU_EVT: MTU updated to %d", param->cfg_mtu.mtu);
       break;
     }
     case ESP_GATTC_DISCONNECT_EVT: {
@@ -254,47 +339,49 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       break;
     }
     case ESP_GATTC_NOTIFY_EVT: {
-      if (param->notify.handle != this->char_read_->handle || this->client_fd_ < 0) {
+      if (this->char_read_ == nullptr || param->notify.handle != this->char_read_->handle || this->client_fd_ < 0) {
         break;
       }
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
       const uint8_t *pData = param->notify.value;
       size_t length = param->notify.value_len;
-      ESP_LOGD(TAG, "BLE notify: length=%d, expected=%d, registers=%d", length, this->total_registers_ + 7, this->total_registers_);
-      if (this->modbus_frame_response_.size() >= 8 && this->modbus_frame_response_[7] == 6) {
-        ESP_LOGI(TAG, "Write command response - flushing client");
-        ESP_LOGI(TAG, "Closing TCP client after write single register response");
-        this->close_client_();
+      ESP_LOGD(TAG, "BLE notify: length=%d, expected=%d", (int) length, this->total_registers_ + 7);
+
+      // FC6 (write) acknowledgement: echo the request per Modbus/TCP so the
+      // client gets a valid response, then keep the connection open.
+      if (this->modbus_frame_response_[7] == FC_WRITE_SINGLE_REGISTER) {
+        ESP_LOGD(TAG, "Write acknowledged, sending Modbus echo response");
+        this->send_all_(this->modbus_request_.data(), MIN_TCP_FRAME);
         break;
       }
+
       if (((int)length - 7) != this->total_registers_) {
         this->errlen_++;
         ESP_LOGW(TAG, "Wrong response length (error %d): expected %d registers, got %d bytes", this->errlen_, this->total_registers_, (int)length - 7);
         if (this->errlen_ > 5) {
           ESP_LOGE(TAG, "Too many length errors (5) - resetting connection");
           ESP_LOGI(TAG, "Closing TCP client due to repeated length errors");
+          this->errlen_ = 0;
           this->close_client_();
-        } else {
-          this->last_ble_msg_ = millis();
         }
         break;
       }
-      ESP_LOGI(TAG, "Received correct BLE response length");
       this->errlen_ = 0;
-      this->last_ble_msg_ = millis();
-      int longitud = abs(pData[7]);
-      ESP_LOGD(TAG, "Response byte count: %d", longitud);
-      std::vector<uint8_t> combined;
-      combined.reserve(8 + 1 + longitud);
-      combined.insert(combined.end(), this->modbus_frame_response_.begin(), this->modbus_frame_response_.end());
-      combined.insert(combined.end(), pData + 7, pData + 7 + longitud + 1);
-      ESP_LOGI(TAG, "Sending Modbus/TCP response of %d bytes", combined.size());
-      if (this->client_fd_ >= 0) {
-        ::send(this->client_fd_, (const char*)combined.data(), combined.size(), 0);
-        this->close_client_();
-        ESP_LOGI(TAG, "Closed TCP client after sending Modbus/TCP response");
+
+      // Validate the payload byte count before reading it, so a bogus value
+      // from the dongle can never read past the notification buffer.
+      size_t data_len = pData[7];
+      if (7 + 1 + data_len > length) {
+        ESP_LOGW(TAG, "Notify byte count %d exceeds payload (%d bytes), dropping", (int) data_len, (int) length);
+        break;
       }
+
+      this->tcp_response_.clear();
+      this->tcp_response_.insert(this->tcp_response_.end(), this->modbus_frame_response_.begin(), this->modbus_frame_response_.end());
+      this->tcp_response_.insert(this->tcp_response_.end(), pData + 7, pData + 7 + data_len + 1);
+      ESP_LOGD(TAG, "Sending Modbus/TCP response of %d bytes", (int) this->tcp_response_.size());
+      this->send_all_(this->tcp_response_.data(), this->tcp_response_.size());
       break;
     }
     default:
