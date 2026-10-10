@@ -5,19 +5,23 @@ ESPHome external component that exposes the SAJ H1-*-S2 inverter Modbus register
 Designed for inverters that only provide local Bluetooth access (no LAN API) so you can query them from Home Assistant or any Modbus/TCP client (Node-RED, Python, etc.).
 
 ## Status / Compatibility
-Tested with ESPHome 2025.6.3, 2025.7.5, 2025.8.3
-Tested on both Arduino and ESP-IDF variants (ESP32).  
+Compatible with ESPHome 2025.9.x (CI builds against 2025.9.3).
+Tested on ESP32 with the ESP-IDF framework; the Arduino framework is also supported but not covered by CI.  
 Not validated together with other active BLE clients; feedback welcome.
 
 ## Repository Structure
 ```
-modbus_ble_bridge/         Component folder (required by ESPHome external_components)
-  __init__.py              Python registration & schema
-  modbus_ble_bridge.h/.cpp C++ implementation
+components/
+  modbus_ble_bridge/       Component folder (required by ESPHome external_components)
+    __init__.py            Python registration & schema
+    modbus_ble_bridge.h/.cpp C++ implementation
+tests/
+  test.yaml                Device config used by CI to validate & compile the component
+.github/workflows/ci.yml   CI pipeline
 README.md
 ```
 
-ESPHome expects each external component to live in its own top‑level folder named after the component (`modbus_ble_bridge`). The previous flat layout (files in repo root) would not be auto-detected — this repo is already reorganized accordingly.
+ESPHome expects each external component to live in a folder named after the component (`modbus_ble_bridge`) inside a `components` source directory. The previous flat layout (files in repo root) would not be auto-detected — this repo is already reorganized accordingly.
 
 ## 1. Add the external component
 ```yaml
@@ -56,6 +60,22 @@ Import the `flows_h1s2_full_v10_mqtt.json` file on your node-red.
 
 ## 5. Querying
 Once flashed and connected, the device opens a Modbus/TCP server on the configured port (default 502). Point any Modbus tool at the ESP32 IP. Example (Python `pymodbus` or Node-RED Modbus node).
+
+## Continuous Integration
+Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`) using the device config in `tests/test.yaml`:
+
+1. `esphome config tests/test.yaml` — validates the YAML schema and component registration.
+2. `esphome compile tests/test.yaml` — compiles the firmware for ESP32 (ESP-IDF).
+
+The workflow posts a build report comment on the pull request. To make the pipeline mandatory for merging, enable branch protection on `main` and mark the **Build** and **Report** checks as *required* (Settings → Branches → Branch protection rules).
+
+To reproduce locally:
+
+```bash
+pip install "esphome==2025.9.3"
+esphome config tests/test.yaml
+esphome compile tests/test.yaml
+```
 
 ## Thanks
 
