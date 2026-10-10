@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (ESPHome ${{ matrix.esphome-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Supported ESPHome versions. Add new releases here as support grows.
+        esphome-version:
+          - "2025.9.3"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-${{ matrix.esphome-version }}-${{ hashFiles('tests/test.yaml') }}
+          restore-keys: |
+            platformio-${{ runner.os }}-${{ matrix.esphome-version }}-
+
+      - name: Install ESPHome ${{ matrix.esphome-version }}
+        run: pip install --disable-pip-version-check "esphome==${{ matrix.esphome-version }}"
+
+      - name: Validate configuration
+        id: validate
+        run: esphome config tests/test.yaml
+
+      - name: Compile firmware
+        id: compile
+        run: esphome compile tests/test.yaml
+
+      - name: Record result
+        if: always()
+        run: |
+          mkdir -p ci-results
+          printf '{"esphome_version":"%s","config":"%s","compile":"%s"}\n' \
+            "${{ matrix.esphome-version }}" \
+            "${{ steps.validate.outcome }}" \
+            "${{ steps.compile.outcome }}" \
+            > "ci-results/result-${{ matrix.esphome-version }}.json"
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.esphome-version }}
+          path: ci-results/result-${{ matrix.esphome-version }}.json
+          if-no-files-found: ignore
+
+  report:
+    name: Report
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    if: always()
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Download results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: result-*
+          path: ci-results
+          merge-multiple: true
+
+      - name: Post build report to pull request
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const dir = 'ci-results';
+            const rows = [];
+            if (fs.existsSync(dir)) {
+              for (const file of fs.readdirSync(dir)) {
+                const result = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+                const icon = (status) => (status === 'success' ? '✅' : '❌');
+                const cell = (status) => icon(status) + ' ' + (status || 'skipped');
+                rows.push(`| \`${result.esphome_version}\` | ${cell(result.config)} | ${cell(result.compile)} |`);
+              }
+            }
+            rows.sort();
+
+            const marker = '<!-- modbus-ble-bridge-ci -->';
+            const body = [
+              marker,
+              '### ESPHome build report',
+              '',
+              '| ESPHome | Config | Compile |',
+              '| ------- | ------ | ------- |',
+              ...(rows.length ? rows : ['| — | — | ❌ no results |']),
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

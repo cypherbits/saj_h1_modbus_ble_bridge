@@ -1,0 +1,37 @@
+# Minimal ESPHome device used by CI to validate the component schema and
+# compile it for ESP32 (ESP-IDF). It is never flashed; the MAC address is a
+# placeholder so no real dongle or secrets file is required.
+esphome:
+  name: modbus-ble-bridge-test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+# Realistic device setup: the bridge serves Modbus/TCP over the network.
+# (The component auto-loads the "network" component, so a network stack is
+# not strictly required just to compile.) Dummy credentials are fine: this
+# config is only compiled, never flashed.
+wifi:
+  ssid: ci-test
+  password: ci-test-password
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components:
+      - modbus_ble_bridge
+
+esp32_ble_tracker:
+
+ble_client:
+  - mac_address: 00:00:00:00:00:00
+    id: test_ble_client
+
+modbus_ble_bridge:
+  ble_client_id: test_ble_client
+  modbus_port: 502
