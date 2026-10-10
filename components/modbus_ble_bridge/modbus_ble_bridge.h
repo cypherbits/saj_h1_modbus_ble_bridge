@@ -2,16 +2,10 @@
 #include "esphome.h"
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/network/util.h"
-#if defined(ARDUINO)
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <WiFiServer.h>
-#else
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <fcntl.h>
 #include <errno.h>
-#endif
 #include <vector>
 
 namespace esphome {
@@ -36,13 +30,8 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   static constexpr const char *BLE_CHAR_READ_UUID = "0000ff02-0000-1000-8000-00805f9b34fb";
   static constexpr const char *BLE_CHAR_WRITE_UUID = "0000ff01-0000-1000-8000-00805f9b34fb";
 
-#if defined(ARDUINO)
-  WiFiServer *mb_server_ = nullptr;
-  WiFiClient client_;
-#else
   int server_fd_ = -1;
   int client_fd_ = -1;
-#endif
   std::vector<uint8_t> modbus_request_;
   std::vector<uint8_t> modbus_frame_response_;
   int total_registers_ = 0;
@@ -65,6 +54,7 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   void handle_modbus_tcp();
   void handle_ble_notify(const std::vector<uint8_t> &data);
   void send_ble_request(const std::vector<uint8_t> &request);
+  void close_client_();
   uint16_t modrtu_crc(const uint8_t *buf, int len);
 };
 

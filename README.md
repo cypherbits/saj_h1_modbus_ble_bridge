@@ -6,7 +6,7 @@ Designed for inverters that only provide local Bluetooth access (no LAN API) so 
 
 ## Status / Compatibility
 Compatible with ESPHome 2025.9.x (CI builds against 2025.9.3).
-Tested on ESP32 with the ESP-IDF framework; the Arduino framework is also supported but not covered by CI.  
+Requires the ESP32 **ESP-IDF** framework (Arduino is not supported). The network server is implemented directly on lwIP sockets.  
 Not validated together with other active BLE clients; feedback welcome.
 
 ## Repository Structure
