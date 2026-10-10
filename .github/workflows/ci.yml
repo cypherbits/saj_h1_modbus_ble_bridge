@@ -26,6 +26,7 @@ jobs:
           - "2025.9.3"
           - "2025.10.4"
           - "2025.11.5"
+          - "2025.12.7"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
