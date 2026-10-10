@@ -19,15 +19,20 @@ CONF_TOTAL_REQUESTS = "total_requests"
 CONF_TIMEOUTS = "timeouts"
 
 
-def AUTO_LOAD():
+def AUTO_LOAD(config=None):
     # ESPHome's "sensor" component is only needed when at least one metric
     # sensor is configured. Without metrics the bridge never instantiates a
     # sensor::Sensor, so skipping the auto-load means its sources are neither
-    # copied nor compiled (and USE_SENSOR stays undefined). ESPHome resolves
-    # AUTO_LOAD after substitutions, so the raw config is available here.
+    # copied nor compiled (and USE_SENSOR stays undefined).
+    # ESPHome >= 2025.10 calls AUTO_LOAD with the validated component config;
+    # older releases call it without arguments and only expose the raw config
+    # through CORE, so fall back to that for backwards compatibility.
     # Only skip "sensor" when we positively know no metric is configured;
     # otherwise fall back to loading it, so metrics can never break.
-    conf = (CORE.raw_config or {}).get("modbus_ble_bridge", {})
+    if config is not None:
+        conf = config
+    else:
+        conf = (CORE.raw_config or {}).get("modbus_ble_bridge", {})
     if isinstance(conf, dict) and CONF_TOTAL_REQUESTS not in conf and CONF_TIMEOUTS not in conf:
         return ["network"]
     return ["network", "sensor"]

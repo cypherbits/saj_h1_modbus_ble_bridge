@@ -5,7 +5,7 @@ ESPHome external component that exposes the SAJ H1-*-S2 inverter Modbus register
 Designed for inverters that only provide local Bluetooth access (no LAN API) so you can query them from Home Assistant or any Modbus/TCP client (Node-RED, Python, etc.).
 
 ## Status / Compatibility
-Compatible with ESPHome 2025.9.x (CI builds against 2025.9.3).
+Compatible with ESPHome 2025.9.x and 2025.10.x (CI builds against 2025.9.3 and 2025.10.4).
 Requires the ESP32 **ESP-IDF** framework (Arduino is not supported). The network server is implemented directly on lwIP sockets.  
 Not validated together with other active BLE clients; feedback welcome.
 
@@ -95,7 +95,7 @@ Notes:
 dependency of this component.
 
 ## Continuous Integration
-Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`) using the device config in `tests/test.yaml`:
+Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3` and `2025.10.4`) using the device config in `tests/test.yaml`:
 
 1. `esphome config tests/*.yaml` — validates the YAML schema and component registration.
 2. `esphome compile tests/*.yaml` — compiles the firmware for ESP32 (ESP-IDF).
@@ -108,7 +108,8 @@ The workflow posts a build report comment on the pull request. To make the pipel
 To reproduce locally:
 
 ```bash
-pip install "esphome==2025.9.3"
+# Repeat with each supported version (replace 2025.10.4 with 2025.9.3).
+pip install "esphome==2025.10.4"
 esphome config tests/test.yaml
 esphome compile tests/test.yaml
 esphome compile tests/test_no_metrics.yaml
