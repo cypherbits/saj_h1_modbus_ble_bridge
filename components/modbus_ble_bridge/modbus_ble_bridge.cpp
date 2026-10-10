@@ -6,6 +6,8 @@
 #include <sys/ioctl.h>
 #endif
 
+#include "modbus_types.h"
+
 namespace esphome {
 namespace modbus_ble_bridge {
 
@@ -16,7 +18,6 @@ static constexpr uint16_t BLE_CHAR_WRITE = 0xFF01;
 
 void ModbusBleBridge::setup() {
   ESP_LOGI(TAG, "Setting up Modbus BLE Bridge");
-  this->modbus_request_.resize(260);
   this->modbus_frame_response_.resize(8);
   this->c_ = 0;
   this->total_calls_ = 0;
@@ -32,13 +33,13 @@ void ModbusBleBridge::loop() {
     }
     return;
   }
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
   if (!this->mb_server_) {
     this->mb_server_ = new WiFiServer(this->modbus_port_);
     this->mb_server_->begin();
     ESP_LOGI(TAG, "Modbus TCP server started on port %d", this->modbus_port_);
   }
-#else
+  #else
   if (this->server_fd_ < 0) {
     this->server_fd_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     if (this->server_fd_ < 0) {
@@ -67,7 +68,7 @@ void ModbusBleBridge::loop() {
     fcntl(this->server_fd_, F_SETFL, flags | O_NONBLOCK);
     ESP_LOGI(TAG, "Modbus TCP server (ESP-IDF) started on port %d", this->modbus_port_);
   }
-#endif
+  #endif
 
   if (this->waiting_message_ && this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
     this->total_errors_++;
@@ -75,19 +76,19 @@ void ModbusBleBridge::loop() {
     this->waiting_message_ = false;
     this->waiting_since_ = 0;
     ESP_LOGI(TAG, "Closing TCP client due to BLE timeout (loop)");
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
     if (this->client_ && this->client_.connected()) this->client_.stop();
-#else
+  #else
     if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+  #endif
   }
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
   if (!this->client_ || !this->client_.connected()) {
-    this->client_ = this->mb_server_->available();
+    this->client_ = this->mb_server_->accept();
     if (!this->client_) return;
     ESP_LOGI(TAG, "Modbus TCP client connected");
   }
-#else
+  #else
   if (this->client_fd_ < 0) {
     sockaddr_in caddr{}; socklen_t clen = sizeof(caddr);
     int fd = ::accept(this->server_fd_, (struct sockaddr*)&caddr, &clen);
@@ -97,15 +98,15 @@ void ModbusBleBridge::loop() {
     this->client_fd_ = fd;
     ESP_LOGI(TAG, "Modbus TCP client connected (ESP-IDF)");
   }
-#endif
+  #endif
   this->handle_modbus_tcp();
 }
 
 void ModbusBleBridge::handle_modbus_tcp() {
   int avail = 0;
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
   avail = this->client_.available();
-#else
+  #else
   if (this->client_fd_ >= 0) {
     uint8_t tmp[1];
     int r = ::recv(this->client_fd_, (char*)tmp, 1, MSG_PEEK | MSG_DONTWAIT);
@@ -119,7 +120,7 @@ void ModbusBleBridge::handle_modbus_tcp() {
       avail = 0;
     }
   }
-#endif
+  #endif
   if (!avail) return;
 
   if (this->waiting_message_) {
@@ -134,57 +135,76 @@ void ModbusBleBridge::handle_modbus_tcp() {
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
       ESP_LOGI(TAG, "Closing TCP client due to BLE timeout while waiting");
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
       if (this->client_ && this->client_.connected()) this->client_.stop();
-#else
+  #else
       if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+  #endif
     }
     return;
   }
 
   ESP_LOGD(TAG, "handle_modbus_tcp: available bytes=%d", avail);
-  int i = 0;
-#if defined(ARDUINO)
-  while (this->client_.available() && i < 260) this->modbus_request_[i++] = this->client_.read();
-#else
+  std::vector<uint8_t> modbus_request_v;
+
+  #if defined(ARDUINO)
+  while (this->client_.available() && modbus_request_v.size() < 260)
+    modbus_request_v.push_back(this->client_.read());
+
+  #else
   if (this->client_fd_ >= 0) {
-    int r = ::recv(this->client_fd_, (char*)this->modbus_request_.data(), 260, MSG_DONTWAIT);
-    if (r <= 0) return; else i = r;
+    int r = ::recv(this->client_fd_, (char*)modbus_request_v.data(), 260, MSG_DONTWAIT);
+    if (r <= 0) return;
   }
-#endif
-  ESP_LOGD(TAG, "Read %d bytes from Modbus TCP client", i);
-  if (i < 12) {
-    ESP_LOGW(TAG, "Incomplete Modbus TCP frame: %d bytes, aborting", i);
+  #endif
+
+  ESP_LOGD(TAG, "Read %d bytes from Modbus TCP client", modbus_request_v.size());
+  if (modbus_request_v.size() < 12) {
+    ESP_LOGW(TAG, "Incomplete Modbus TCP frame: %d bytes, aborting", modbus_request_v.size());
     return;
   }
-#if defined(ARDUINO)
-  this->client_.flush();
-#endif
-  uint8_t fn_code = this->modbus_request_[7];
-  uint8_t unit_id = this->modbus_request_[6];
+  #if defined(ARDUINO)
+  this->client_.clear();
+  #endif
+
+  modbus_saj::ModbusTCPRequest modbus_request(modbus_request_v);
   this->ble_response_buffer_.clear();
   this->expected_frame_len_ = 0;
-  uint8_t addr_hi = this->modbus_request_[8];
-  uint8_t addr_lo = this->modbus_request_[9];
-  uint8_t reg_hi  = this->modbus_request_[10];
-  uint8_t reg_lo  = this->modbus_request_[11];
-  this->requested_regs_ = (uint16_t(reg_hi) << 8) | reg_lo;
-  int num_regs = ((reg_hi << 8) | reg_lo);
-  this->total_registers_ = num_regs * 2 + 3;
-  std::vector<uint8_t> ble_req = {77, 0, static_cast<uint8_t>(c_), 9, 50, unit_id, fn_code, addr_hi, addr_lo, reg_hi, reg_lo};
+
+  const uint8_t* address = modbus_request.getAddressBytes();
+  const uint8_t* number_registers  = modbus_request.getNumberRegistersBytes();
+  this->total_registers_ = modbus_request.getNumberOfRegisters();
+
+  std::vector<uint8_t> ble_req = {
+    77,
+    0,
+    static_cast<uint8_t>(c_),
+    9,
+    50,
+    modbus_request.getUnitId(),
+    modbus_request.getFunctionCode(),
+    address[0],
+    address[1],
+    number_registers[0],
+    number_registers[1]
+  };
+
   uint16_t crc = this->modrtu_crc(ble_req.data() + 5, 6);
   ble_req.push_back(crc & 0xFF);
   ble_req.push_back((crc >> 8) & 0xFF);
   int total_regs = this->total_registers_;
-  this->modbus_frame_response_[0] = this->modbus_request_[0];
-  this->modbus_frame_response_[1] = this->modbus_request_[1];
-  this->modbus_frame_response_[2] = this->modbus_request_[2];
-  this->modbus_frame_response_[3] = this->modbus_request_[3];
+
+  const uint8_t* transaction_identifier = modbus_request.getTransactionIdentifierBytes();
+  const uint8_t* protocol_identifier = modbus_request.getProtocolIdentifierBytes();
+  this->modbus_frame_response_[0] = transaction_identifier[0];
+  this->modbus_frame_response_[1] = transaction_identifier[1];
+  this->modbus_frame_response_[2] = protocol_identifier[0];
+  this->modbus_frame_response_[3] = protocol_identifier[1];
   this->modbus_frame_response_[4] = (total_regs & 0xFF00) >> 8;
   this->modbus_frame_response_[5] = total_regs & 0xFF;
-  this->modbus_frame_response_[6] = unit_id;
-  this->modbus_frame_response_[7] = fn_code;
+  this->modbus_frame_response_[6] = modbus_request.getUnitId();
+  this->modbus_frame_response_[7] = modbus_request.getFunctionCode();
+
   ESP_LOGD(TAG, "Sending BLE request of %d bytes (seq=%d)", ble_req.size(), this->c_);
   this->send_ble_request(ble_req);
   this->c_++;
@@ -244,11 +264,11 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       this->char_write_ = nullptr;
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
       if (this->client_ && this->client_.connected()) this->client_.stop();
-#else
+  #else
       if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+  #endif
       break;
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
@@ -272,11 +292,11 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
     }
     case ESP_GATTC_NOTIFY_EVT: {
       bool client_ok = false;
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
       client_ok = (bool)this->client_ && this->client_.connected();
-#else
+  #else
       client_ok = this->client_fd_ >= 0;
-#endif
+  #endif
       if (param->notify.handle != this->char_read_->handle || !client_ok) {
         break;
       }
@@ -288,11 +308,11 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       if (this->modbus_frame_response_.size() >= 8 && this->modbus_frame_response_[7] == 6) {
         ESP_LOGI(TAG, "Write command response - flushing client");
         ESP_LOGI(TAG, "Closing TCP client after write single register response");
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
         this->client_.stop();
-#else
+  #else
         if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+  #endif
         break;
       }
       if (((int)length - 7) != this->total_registers_) {
@@ -301,11 +321,11 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
         if (this->errlen_ > 5) {
           ESP_LOGE(TAG, "Too many length errors (5) - resetting connection");
           ESP_LOGI(TAG, "Closing TCP client due to repeated length errors");
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
           this->client_.stop();
-#else
+  #else
           if (this->client_fd_ >= 0) { ::close(this->client_fd_); this->client_fd_ = -1; }
-#endif
+  #endif
         } else {
           this->last_ble_msg_ = millis();
         }
@@ -321,18 +341,18 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       combined.insert(combined.end(), this->modbus_frame_response_.begin(), this->modbus_frame_response_.end());
       combined.insert(combined.end(), pData + 7, pData + 7 + longitud + 1);
       ESP_LOGI(TAG, "Sending Modbus/TCP response of %d bytes", combined.size());
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
       this->client_.write(combined.data(), combined.size());
       this->client_.stop();
       ESP_LOGI(TAG, "Closed TCP client after sending Modbus/TCP response");
-#else
+  #else
       if (this->client_fd_ >= 0) {
         ::send(this->client_fd_, (const char*)combined.data(), combined.size(), 0);
         ::close(this->client_fd_);
         this->client_fd_ = -1;
         ESP_LOGI(TAG, "Closed TCP client after sending Modbus/TCP response (ESP-IDF)");
       }
-#endif
+  #endif
       break;
     }
     default:
