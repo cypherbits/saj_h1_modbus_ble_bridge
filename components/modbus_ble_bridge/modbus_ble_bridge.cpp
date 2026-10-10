@@ -18,7 +18,23 @@ void ModbusBleBridge::setup() {
   this->modbus_frame_response_.resize(8);
   this->c_ = 0;
   this->total_calls_ = 0;
-  this->total_errors_ = 0;
+  this->total_timeouts_ = 0;
+}
+
+void ModbusBleBridge::note_request_() {
+  this->total_calls_++;
+#ifdef USE_MODBUS_BLE_BRIDGE_METRICS
+  if (this->total_requests_sensor_ != nullptr)
+    this->total_requests_sensor_->publish_state(this->total_calls_);
+#endif
+}
+
+void ModbusBleBridge::note_timeout_() {
+  this->total_timeouts_++;
+#ifdef USE_MODBUS_BLE_BRIDGE_METRICS
+  if (this->timeouts_sensor_ != nullptr)
+    this->timeouts_sensor_->publish_state(this->total_timeouts_);
+#endif
 }
 
 void ModbusBleBridge::close_client_() {
@@ -67,7 +83,7 @@ void ModbusBleBridge::loop() {
   }
 
   if (this->waiting_message_ && this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
-    this->total_errors_++;
+    this->note_timeout_();
     ESP_LOGW(TAG, "BLE response timeout after %u ms (loop). Resetting state.", this->ble_response_timeout_ms_);
     this->waiting_message_ = false;
     this->waiting_since_ = 0;
@@ -111,7 +127,7 @@ void ModbusBleBridge::handle_modbus_tcp() {
       this->last_wait_log_ = now;
     }
     if (this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
-      this->total_errors_++;
+      this->note_timeout_();
       ESP_LOGW(TAG, "BLE response timeout after %u ms. Resetting state.", this->ble_response_timeout_ms_);
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
@@ -160,7 +176,7 @@ void ModbusBleBridge::handle_modbus_tcp() {
   this->send_ble_request(ble_req);
   this->c_++;
   if (this->c_ > 255) this->c_ = 0;
-  this->total_calls_++;
+  this->note_request_();
   ESP_LOGD(TAG, "BLE request sent, next seq=%d, total_calls=%d", this->c_, this->total_calls_);
   this->waiting_message_ = true;
   this->waiting_since_ = millis();
