@@ -34,16 +34,12 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   uint16_t modbus_port_ = 502;
   uint32_t ble_response_timeout_ms_ = 2000;
 
-  static constexpr const char *BLE_SERVICE_UUID = "0000ffff-0000-1000-8000-00805f9b34fb";
-  static constexpr const char *BLE_CHAR_READ_UUID = "0000ff02-0000-1000-8000-00805f9b34fb";
-  static constexpr const char *BLE_CHAR_WRITE_UUID = "0000ff01-0000-1000-8000-00805f9b34fb";
-
   int server_fd_ = -1;
   int client_fd_ = -1;
   std::vector<uint8_t> modbus_request_;
   std::vector<uint8_t> modbus_frame_response_;
+  std::vector<uint8_t> tcp_response_;
   int total_registers_ = 0;
-  uint16_t requested_regs_{0};
   int errlen_ = 0;
   int c_ = 0;
   int total_calls_ = 0;
@@ -53,19 +49,17 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   sensor::Sensor *timeouts_sensor_{nullptr};
 #endif
   unsigned long last_wifi_check_ = 0;
-  unsigned long last_ble_msg_ = 0;
   bool waiting_message_ = false;
   unsigned long waiting_since_ = 0;
   unsigned long last_wait_log_ = 0;
 
   esp32_ble_client::BLECharacteristic *char_read_ = nullptr;
   esp32_ble_client::BLECharacteristic *char_write_ = nullptr;
-  std::vector<uint8_t> ble_response_buffer_;
-  size_t expected_frame_len_ = 0;
 
   void handle_modbus_tcp();
-  void handle_ble_notify(const std::vector<uint8_t> &data);
-  void send_ble_request(const std::vector<uint8_t> &request);
+  bool send_ble_request(uint8_t *data, size_t len);
+  bool send_all_(const uint8_t *data, size_t len);
+  void send_exception_(uint8_t fn_code, uint8_t exception_code);
   void close_client_();
   void note_request_();
   void note_timeout_();
