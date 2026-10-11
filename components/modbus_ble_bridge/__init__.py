@@ -4,7 +4,6 @@ from esphome.const import CONF_ID, STATE_CLASS_TOTAL_INCREASING
 from esphome.components import sensor
 from esphome.components.ble_client import CONF_BLE_CLIENT_ID, BLEClient
 import esphome.components.ble_client as ble_client
-from esphome.config_validation import positive_int
 from esphome.core import CORE
 
 DEPENDENCIES = ["ble_client"]
@@ -17,6 +16,21 @@ ModbusBleBridge = modbus_ble_bridge_ns.class_(
 CONF_MODBUS_PORT = "modbus_port"
 CONF_TOTAL_REQUESTS = "total_requests"
 CONF_TIMEOUTS = "timeouts"
+
+# ESPHome 2026.7 added `cv.Visibility.UI` and made schema-aware editors (the
+# new ESPHome Device Builder included) hide an optional field with no hint
+# behind their "advanced settings" disclosure. This component has only a few
+# settings and all of them are meant to be visible, so every optional field is
+# pinned to the editor's main form. The hint is purely advisory and does not
+# change validation.
+# 2026.5/2026.6 know `cv.Visibility` without `UI` and already render unset
+# fields on the main form, while earlier releases have no `visibility` kwarg at
+# all and their `cv.Optional` would reject it, hence the capability check.
+MAIN_FORM = (
+    {"visibility": cv.Visibility.UI}
+    if getattr(getattr(cv, "Visibility", None), "UI", None) is not None
+    else {}
+)
 
 
 def AUTO_LOAD(config=None):
@@ -46,13 +60,13 @@ CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(ModbusBleBridge),
         cv.Required(CONF_BLE_CLIENT_ID): cv.use_id(BLEClient),
-        cv.Optional(CONF_MODBUS_PORT, default=502): positive_int,
-        cv.Optional(CONF_TOTAL_REQUESTS): sensor.sensor_schema(
+        cv.Optional(CONF_MODBUS_PORT, default=502, **MAIN_FORM): cv.port,
+        cv.Optional(CONF_TOTAL_REQUESTS, **MAIN_FORM): sensor.sensor_schema(
             icon="mdi:counter",
             accuracy_decimals=0,
             state_class=STATE_CLASS_TOTAL_INCREASING,
         ),
-        cv.Optional(CONF_TIMEOUTS): sensor.sensor_schema(
+        cv.Optional(CONF_TIMEOUTS, **MAIN_FORM): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
             accuracy_decimals=0,
             state_class=STATE_CLASS_TOTAL_INCREASING,
