@@ -33,6 +33,9 @@ jobs:
           - "2026.4.5"
           - "2026.5.3"
           - "2026.6.5"
+          - "2026.7.4"
+          - "2026.8.2"
+          - "2026.9.1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,6 +52,18 @@ jobs:
           key: platformio-${{ runner.os }}-${{ matrix.esphome-version }}-${{ hashFiles('tests/*.yaml') }}
           restore-keys: |
             platformio-${{ runner.os }}-${{ matrix.esphome-version }}-
+
+      # ESPHome 2026.7 made the native ESP-IDF toolchain the default, which
+      # installs the ESP-IDF framework and its GCC toolchains under
+      # ~/.cache/esphome/idf instead of ~/.platformio. Caching it keeps the
+      # 2026.7+ matrix jobs from re-downloading them on every run.
+      - name: Cache ESP-IDF framework
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/esphome/idf
+          key: idf-${{ runner.os }}-${{ matrix.esphome-version }}-${{ hashFiles('tests/*.yaml') }}
+          restore-keys: |
+            idf-${{ runner.os }}-${{ matrix.esphome-version }}-
 
       - name: Install ESPHome ${{ matrix.esphome-version }}
         run: pip install --disable-pip-version-check "esphome==${{ matrix.esphome-version }}"
