@@ -5,7 +5,7 @@ ESPHome external component that exposes the SAJ H1-*-S2 inverter Modbus register
 Designed for inverters that only provide local Bluetooth access (no LAN API) so you can query them from Home Assistant or any Modbus/TCP client (Node-RED, Python, etc.).
 
 ## Status / Compatibility
-Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x, 2026.6.x and 2026.7.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5 and 2026.7.4).
+Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x, 2026.6.x, 2026.7.x and 2026.8.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4 and 2026.8.2).
 Requires the ESP32 **ESP-IDF** framework (Arduino is not supported). The network server is implemented directly on lwIP sockets.  
 Not validated together with other active BLE clients; feedback welcome.
 
@@ -95,7 +95,7 @@ Notes:
 dependency of this component.
 
 ## Continuous Integration
-Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3`, `2026.6.5` and `2026.7.4`) using the device config in `tests/test.yaml`:
+Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3`, `2026.6.5`, `2026.7.4` and `2026.8.2`) using the device config in `tests/test.yaml`:
 
 1. `esphome config tests/*.yaml` — validates the YAML schema and component registration.
 2. `esphome compile tests/*.yaml` — compiles the firmware for ESP32 (ESP-IDF).
@@ -108,8 +108,8 @@ The workflow posts a build report comment on the pull request. To make the pipel
 To reproduce locally:
 
 ```bash
-# Repeat with each supported version (2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5 and 2026.7.4).
-pip install "esphome==2026.7.4"
+# Repeat with each supported version (2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4 and 2026.8.2).
+pip install "esphome==2026.8.2"
 esphome config tests/test.yaml
 esphome compile tests/test.yaml
 esphome compile tests/test_no_metrics.yaml
@@ -137,5 +137,6 @@ Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 ## Implementation notes
 * **Single `loop()` per iteration.** The component is both an ESPHome `Component` and a `ble_client::BLEClientNode`, so the scheduler and `BLEClient::loop()` would each call it every cycle. The forwarded call is skipped (`App.get_current_component()`), keeping the scheduler call that also runs while the BLE client is idle and has disabled its own loop, which is what keeps the Modbus/TCP server alive.
 * **BLE MTU.** ESPHome negotiates the ESP-IDF default, which resolves to the maximum of 517 bytes (`cfg_mtu status 0, mtu 517` in a real device log), so large multi-register reads (~260-byte notifications) arrive in a single notification.
+* **The node never reports `espbt::ClientState::ESTABLISHED` on purpose.** `ble_client` frees the peer's GATT services (`release_services()` deletes the `BLEService`/`BLECharacteristic` objects and cleans the stack cache) once the client and every registered node are `ESTABLISHED`. The bridge caches `char_write_`/`char_read_` for the whole connection lifetime, so establishing itself would leave those pointers dangling. ESPHome 2026.8 documents this contract explicitly (`register_for_notify()` + `pending_notify_regs_` + the `services_released_` backstop), so keep the node out of the release path.
 * **Conditional `sensor` auto-load.** ESPHome *does* allow a callable `AUTO_LOAD`, so `sensor` is only pulled in when `total_requests`/`timeouts` are configured. Without metrics its sources are neither copied nor compiled and `USE_SENSOR` stays undefined; the emitted firmware is byte-identical, but the build is lighter.
-* **ESPHome 2026.7 build changes.** 2026.7 makes the *native ESP-IDF toolchain* the default (through 2026.6 the default was PlatformIO, so the build ran through `~/.platformio`) and ships ESP-IDF **5.5.5** instead of 5.5.4. Its Xtensa GCC defines `uint32_t` as `unsigned long`, which turned the `%u` specifiers on `ble_response_timeout_ms_` into `-Wformat=` warnings; they are cast to `unsigned` so the component stays warning-free with both 5.5.4 and 5.5.5 toolchains. Nothing else in the component needed changing.
+* **ESPHome 2026.7 build changes.** 2026.7 makes the *native ESP-IDF toolchain* the default (through 2026.6 the default was PlatformIO, which built through `~/.platformio`) and ships ESP-IDF **5.5.5** instead of 5.5.4 (2026.8 keeps both). The native generator compiles ESPHome sources with `-Wall`, which surfaced three `-Wformat=` warnings: on Xtensa `uint32_t` is `unsigned long`, so `%u` never matched it (the PlatformIO build passed no `-Wall`/`-Wformat`, so the same mismatch stayed silent there). The `ble_response_timeout_ms_` log arguments are now cast to `unsigned` — the value is preserved on every supported target (32-bit `unsigned int`) — so the component is warning-free with both toolchains. Nothing else in the component needed changing.
