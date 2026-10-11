@@ -148,7 +148,7 @@ void ModbusBleBridge::loop() {
 
   if (this->waiting_message_ && this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
     this->note_timeout_();
-    ESP_LOGW(TAG, "BLE response timeout after %u ms (loop). Resetting state.", this->ble_response_timeout_ms_);
+    ESP_LOGW(TAG, "BLE response timeout after %u ms (loop). Resetting state.", (unsigned) this->ble_response_timeout_ms_);
     this->waiting_message_ = false;
     this->waiting_since_ = 0;
     ESP_LOGI(TAG, "Closing TCP client due to BLE timeout (loop)");
@@ -191,7 +191,7 @@ void ModbusBleBridge::handle_modbus_tcp() {
     }
     if (this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
       this->note_timeout_();
-      ESP_LOGW(TAG, "BLE response timeout after %u ms. Resetting state.", this->ble_response_timeout_ms_);
+      ESP_LOGW(TAG, "BLE response timeout after %u ms. Resetting state.", (unsigned) this->ble_response_timeout_ms_);
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
       ESP_LOGI(TAG, "Closing TCP client due to BLE timeout while waiting");
@@ -307,7 +307,7 @@ bool ModbusBleBridge::send_ble_request(uint8_t *data, size_t len) {
 void ModbusBleBridge::dump_config() {
   ESP_LOGCONFIG(TAG, "Modbus BLE Bridge:");
   ESP_LOGCONFIG(TAG, "  Port: %u", this->modbus_port_);
-  ESP_LOGCONFIG(TAG, "  BLE response timeout: %u ms", this->ble_response_timeout_ms_);
+  ESP_LOGCONFIG(TAG, "  BLE response timeout: %u ms", (unsigned) this->ble_response_timeout_ms_);
 }
 
 void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,

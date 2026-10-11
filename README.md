@@ -5,7 +5,7 @@ ESPHome external component that exposes the SAJ H1-*-S2 inverter Modbus register
 Designed for inverters that only provide local Bluetooth access (no LAN API) so you can query them from Home Assistant or any Modbus/TCP client (Node-RED, Python, etc.).
 
 ## Status / Compatibility
-Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x and 2026.6.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3 and 2026.6.5).
+Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x, 2026.6.x and 2026.7.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5 and 2026.7.4).
 Requires the ESP32 **ESP-IDF** framework (Arduino is not supported). The network server is implemented directly on lwIP sockets.  
 Not validated together with other active BLE clients; feedback welcome.
 
@@ -95,7 +95,7 @@ Notes:
 dependency of this component.
 
 ## Continuous Integration
-Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3` and `2026.6.5`) using the device config in `tests/test.yaml`:
+Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3`, `2026.6.5` and `2026.7.4`) using the device config in `tests/test.yaml`:
 
 1. `esphome config tests/*.yaml` — validates the YAML schema and component registration.
 2. `esphome compile tests/*.yaml` — compiles the firmware for ESP32 (ESP-IDF).
@@ -108,8 +108,8 @@ The workflow posts a build report comment on the pull request. To make the pipel
 To reproduce locally:
 
 ```bash
-# Repeat with each supported version (2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3 and 2026.6.5).
-pip install "esphome==2026.6.5"
+# Repeat with each supported version (2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5 and 2026.7.4).
+pip install "esphome==2026.7.4"
 esphome config tests/test.yaml
 esphome compile tests/test.yaml
 esphome compile tests/test_no_metrics.yaml
@@ -138,3 +138,4 @@ Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 * **Single `loop()` per iteration.** The component is both an ESPHome `Component` and a `ble_client::BLEClientNode`, so the scheduler and `BLEClient::loop()` would each call it every cycle. The forwarded call is skipped (`App.get_current_component()`), keeping the scheduler call that also runs while the BLE client is idle and has disabled its own loop, which is what keeps the Modbus/TCP server alive.
 * **BLE MTU.** ESPHome negotiates the ESP-IDF default, which resolves to the maximum of 517 bytes (`cfg_mtu status 0, mtu 517` in a real device log), so large multi-register reads (~260-byte notifications) arrive in a single notification.
 * **Conditional `sensor` auto-load.** ESPHome *does* allow a callable `AUTO_LOAD`, so `sensor` is only pulled in when `total_requests`/`timeouts` are configured. Without metrics its sources are neither copied nor compiled and `USE_SENSOR` stays undefined; the emitted firmware is byte-identical, but the build is lighter.
+* **ESPHome 2026.7 build changes.** 2026.7 makes the *native ESP-IDF toolchain* the default (through 2026.6 the default was PlatformIO, so the build ran through `~/.platformio`) and ships ESP-IDF **5.5.5** instead of 5.5.4. Its Xtensa GCC defines `uint32_t` as `unsigned long`, which turned the `%u` specifiers on `ble_response_timeout_ms_` into `-Wformat=` warnings; they are cast to `unsigned` so the component stays warning-free with both 5.5.4 and 5.5.5 toolchains. Nothing else in the component needed changing.
