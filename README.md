@@ -120,7 +120,8 @@ esphome compile tests/test_no_metrics.yaml
 Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 
 ## Notes / Limitations
-* Serves one TCP client at a time; the connection is kept open to answer multiple sequential requests.
+* Serves one TCP client at a time; the connection is kept open to answer multiple sequential requests. A new connection replaces the current one, so a dead or half-open client cannot keep the single slot busy.
+* TCP keepalive (10 s idle, 3 probes every 5 s), `TCP_NODELAY` and a 60 s idle timeout are enabled on accepted clients, so vanished peers are detected and dropped without rebooting the ESP32.
 * Only function code 3 (read holding registers, max 125) and 6 (write single register) are tunnelled. Any other function code, a malformed MBAP header or an invalid register count is answered with a Modbus exception.
 * Writes (FC 6) are acknowledged with the standard Modbus/TCP echo response.
 * The BLE response timeout is currently fixed in code (2s). If needed this can be exposed later via YAML.

@@ -18,6 +18,13 @@ static constexpr size_t MAX_TCP_RESPONSE = 264;
 static constexpr int MAX_READ_REGISTERS = 125;  // Modbus limit for FC3
 static constexpr uint8_t FC_READ_HOLDING_REGISTERS = 3;
 static constexpr uint8_t FC_WRITE_SINGLE_REGISTER = 6;
+// A client that stops sending requests without closing its socket must not
+// keep the single connection slot forever.
+static constexpr unsigned long TCP_IDLE_TIMEOUT_MS = 60000;
+static constexpr int MODBUS_TCP_LISTEN_BACKLOG = 4;
+static constexpr int TCP_KEEPALIVE_IDLE_S = 10;
+static constexpr int TCP_KEEPALIVE_INTERVAL_S = 5;
+static constexpr int TCP_KEEPALIVE_COUNT = 3;
 
 void ModbusBleBridge::setup() {
   ESP_LOGI(TAG, "Setting up Modbus BLE Bridge");
@@ -56,6 +63,7 @@ void ModbusBleBridge::close_client_() {
   this->waiting_message_ = false;
   this->waiting_since_ = 0;
   this->errlen_ = 0;
+  this->last_rx_ = 0;
 }
 
 // Send the whole buffer, retrying on short writes and EAGAIN (non-blocking
@@ -73,7 +81,8 @@ bool ModbusBleBridge::send_all_(const uint8_t *data, size_t len) {
     }
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       if (millis() - start > 1000) {
-        ESP_LOGW(TAG, "TCP send timed out");
+        ESP_LOGW(TAG, "TCP send timed out, closing client");
+        this->close_client_();
         return false;
       }
       delay(1);
@@ -81,7 +90,8 @@ bool ModbusBleBridge::send_all_(const uint8_t *data, size_t len) {
     }
     if (n < 0 && errno == EINTR)
       continue;
-    ESP_LOGW(TAG, "TCP send failed: errno=%d", errno);
+    ESP_LOGW(TAG, "TCP send failed: errno=%d, closing client", errno);
+    this->close_client_();
     return false;
   }
   return true;
@@ -111,6 +121,10 @@ void ModbusBleBridge::loop() {
 
   unsigned long now = millis();
   if (!esphome::network::is_connected()) {
+    if (this->client_fd_ >= 0) {
+      ESP_LOGW(TAG, "WiFi disconnected, closing Modbus TCP client");
+      this->close_client_();
+    }
     if (now - this->last_wifi_check_ >= 5000) {
       ESP_LOGW(TAG, "WiFi not connected");
       this->last_wifi_check_ = now;
@@ -135,7 +149,7 @@ void ModbusBleBridge::loop() {
       this->server_fd_ = -1;
       return;
     }
-    if (listen(this->server_fd_, 1) != 0) {
+    if (listen(this->server_fd_, MODBUS_TCP_LISTEN_BACKLOG) != 0) {
       ESP_LOGE(TAG, "listen() failed: errno=%d", errno);
       ::close(this->server_fd_);
       this->server_fd_ = -1;
@@ -154,13 +168,38 @@ void ModbusBleBridge::loop() {
     ESP_LOGI(TAG, "Closing TCP client due to BLE timeout (loop)");
     this->close_client_();
   }
-  if (this->client_fd_ < 0) {
-    sockaddr_in caddr{}; socklen_t clen = sizeof(caddr);
-    int fd = ::accept(this->server_fd_, (struct sockaddr*)&caddr, &clen);
-    if (fd < 0) return;
+  if (this->client_fd_ >= 0 && !this->waiting_message_ && this->last_rx_ != 0 &&
+      (now - this->last_rx_) > TCP_IDLE_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "Modbus TCP client idle for %u ms, closing", (unsigned) (now - this->last_rx_));
+    this->close_client_();
+  }
+
+  // Always try to accept. If a new client is waiting while the current socket
+  // is dead or half-open, the new connection replaces it instead of staying in
+  // the listen backlog forever.
+  sockaddr_in caddr{}; socklen_t clen = sizeof(caddr);
+  int fd = ::accept(this->server_fd_, (struct sockaddr*)&caddr, &clen);
+  if (fd >= 0) {
+    if (this->client_fd_ >= 0) {
+      ESP_LOGW(TAG, "New Modbus TCP client connected, replacing previous connection");
+      this->close_client_();
+    }
     int cflags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, cflags | O_NONBLOCK);
+    // Detect a peer that vanished without sending FIN/RST. lwIP supports the
+    // standard keepalive socket options, so a dead client is dropped in ~25 s.
+    int keepalive = 1;
+    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+    int idle = TCP_KEEPALIVE_IDLE_S;
+    int interval = TCP_KEEPALIVE_INTERVAL_S;
+    int count = TCP_KEEPALIVE_COUNT;
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+    int no_delay = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay));
     this->client_fd_ = fd;
+    this->last_rx_ = millis();
     ESP_LOGI(TAG, "Modbus TCP client connected");
   }
   this->handle_modbus_tcp();
@@ -179,7 +218,15 @@ void ModbusBleBridge::handle_modbus_tcp() {
       this->close_client_();
       return;
     }
-    avail = (r > 0) ? r : 0;
+    if (r < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        return;
+      ESP_LOGW(TAG, "TCP recv error: errno=%d, closing client", errno);
+      this->close_client_();
+      return;
+    }
+    avail = r;
+    this->last_rx_ = millis();
   }
   if (!avail) return;
 
@@ -208,7 +255,20 @@ void ModbusBleBridge::handle_modbus_tcp() {
   int i = 0;
   if (this->client_fd_ >= 0) {
     int r = ::recv(this->client_fd_, (char*)this->modbus_request_.data(), MAX_TCP_FRAME, MSG_DONTWAIT);
-    if (r <= 0) return; else i = r;
+    if (r == 0) {
+      ESP_LOGI(TAG, "TCP client closed while reading request");
+      this->close_client_();
+      return;
+    }
+    if (r < 0) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+        ESP_LOGW(TAG, "TCP recv error: errno=%d, closing client", errno);
+        this->close_client_();
+      }
+      return;
+    }
+    i = r;
+    this->last_rx_ = millis();
   }
   ESP_LOGD(TAG, "Read %d bytes from Modbus TCP client", i);
   if (i < static_cast<int>(MIN_TCP_FRAME)) {
