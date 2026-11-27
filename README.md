@@ -5,7 +5,7 @@ ESPHome external component that exposes the SAJ H1-*-S2 inverter Modbus register
 Designed for inverters that only provide local Bluetooth access (no LAN API) so you can query them from Home Assistant or any Modbus/TCP client (Node-RED, Python, etc.).
 
 ## Status / Compatibility
-Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x, 2026.6.x, 2026.7.x, 2026.8.x and 2026.9.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4, 2026.8.2 and 2026.9.1).
+Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x, 2026.6.x, 2026.7.x, 2026.8.x, 2026.9.x, 2026.10.x and 2026.11.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4, 2026.8.2, 2026.9.1, 2026.10.2 and 2026.11.1).
 Requires the ESP32 **ESP-IDF** framework (Arduino is not supported). The network server is implemented directly on lwIP sockets.  
 Not validated together with other active BLE clients; feedback welcome.
 
@@ -95,7 +95,7 @@ Notes:
 dependency of this component.
 
 ## Continuous Integration
-Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3`, `2026.6.5`, `2026.7.4`, `2026.8.2` and `2026.9.1`) using the device config in `tests/test.yaml`:
+Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3`, `2026.6.5`, `2026.7.4`, `2026.8.2`, `2026.9.1`, `2026.10.2` and `2026.11.1`) using the device config in `tests/test.yaml`:
 
 1. `esphome config tests/*.yaml` — validates the YAML schema and component registration.
 2. `esphome compile tests/*.yaml` — compiles the firmware for ESP32 (ESP-IDF).
@@ -108,8 +108,8 @@ The workflow posts a build report comment on the pull request. To make the pipel
 To reproduce locally:
 
 ```bash
-# Repeat with each supported version (2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4, 2026.8.2 and 2026.9.1).
-pip install "esphome==2026.9.1"
+# Repeat with each supported version (2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4, 2026.8.2, 2026.9.1, 2026.10.2 and 2026.11.1).
+pip install "esphome==2026.11.1"
 esphome config tests/test.yaml
 esphome compile tests/test.yaml
 esphome compile tests/test_no_metrics.yaml
