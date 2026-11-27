@@ -15,6 +15,7 @@ ModbusBleBridge = modbus_ble_bridge_ns.class_(
 )
 
 CONF_MODBUS_PORT = "modbus_port"
+CONF_BLE_RESPONSE_TIMEOUT = "ble_response_timeout"
 CONF_TOTAL_REQUESTS = "total_requests"
 CONF_TIMEOUTS = "timeouts"
 
@@ -47,6 +48,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(ModbusBleBridge),
         cv.Required(CONF_BLE_CLIENT_ID): cv.use_id(BLEClient),
         cv.Optional(CONF_MODBUS_PORT, default=502): positive_int,
+        cv.Optional(CONF_BLE_RESPONSE_TIMEOUT, default="5000ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_TOTAL_REQUESTS): sensor.sensor_schema(
             icon="mdi:counter",
             accuracy_decimals=0,
@@ -66,6 +68,7 @@ def to_code(config):
     yield cg.register_component(var, config)
     yield ble_client.register_ble_node(var, config)
     cg.add(var.set_modbus_port(config[CONF_MODBUS_PORT]))
+    cg.add(var.set_ble_response_timeout(config[CONF_BLE_RESPONSE_TIMEOUT].total_milliseconds))
 
     metrics = False
     if CONF_TOTAL_REQUESTS in config:

@@ -35,6 +35,7 @@ ble_client:
 modbus_ble_bridge:
   ble_client_id: test_ble_client
   modbus_port: 502
+  ble_response_timeout: 5s
   # Optional metric sensors; configuring at least one compiles in the metric
   # code path so CI covers it.
   total_requests:

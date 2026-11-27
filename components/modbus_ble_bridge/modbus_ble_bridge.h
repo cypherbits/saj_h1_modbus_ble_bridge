@@ -32,7 +32,7 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
 
  protected:
   uint16_t modbus_port_ = 502;
-  uint32_t ble_response_timeout_ms_ = 2000;
+  uint32_t ble_response_timeout_ms_ = 5000;
 
   int server_fd_ = -1;
   int client_fd_ = -1;
