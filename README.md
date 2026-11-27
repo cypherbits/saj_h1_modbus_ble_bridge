@@ -61,7 +61,7 @@ modbus_ble_bridge:
 
 ## 4. Get the data on NodeRed
 
-Import the `flows_h1s2_full_v10_mqtt.json` file on your node-red.
+Import the `flows_h1s2_full_v10_mqtt.json` file on your node-red. The Modbus client in the example points to `192.168.1.203:502`; change it to your ESP32 address and port if they differ.
 
 ## 5. Querying
 Once flashed and connected, the device opens a Modbus/TCP server on the configured port (default 502). Point any Modbus tool at the ESP32 IP. Example (Python `pymodbus` or Node-RED Modbus node).
