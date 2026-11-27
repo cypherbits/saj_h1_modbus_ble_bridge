@@ -275,6 +275,7 @@ void ModbusBleBridge::handle_modbus_tcp() {
     this->send_exception_(fn_code, 0x0B);  // gateway target device failed to respond
     return;
   }
+  this->last_sent_seq_ = seq;
   this->c_ = (this->c_ + 1) & 0xFF;
   this->note_request_();
   this->waiting_message_ = true;
@@ -332,6 +333,7 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       this->char_write_ = nullptr;
       this->waiting_message_ = false;
       this->waiting_since_ = 0;
+      this->seq_echo_state_ = -1;
       this->close_client_();
       break;
     }
@@ -367,10 +369,33 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
         ESP_LOGD(TAG, "Ignoring unsolicited BLE notification (%d bytes)", (int) param->notify.value_len);
         break;
       }
-      this->waiting_message_ = false;
-      this->waiting_since_ = 0;
       const uint8_t *pData = param->notify.value;
       size_t length = param->notify.value_len;
+
+      // Correlate read responses with the request in flight. The dongle echoes
+      // the request sequence byte; learn that from the first valid-length
+      // response and only enforce it when present, so firmware that does not
+      // echo it keeps working. A stale response must not cancel the current
+      // request or be forwarded as its result.
+      if (this->modbus_frame_response_[7] == FC_READ_HOLDING_REGISTERS) {
+        if (length < 10) {
+          ESP_LOGW(TAG, "BLE read response too short (%d bytes), dropping", (int) length);
+          break;
+        }
+        if (((int) length - 7) == this->total_registers_) {
+          if (this->seq_echo_state_ < 0) {
+            this->seq_echo_state_ = (pData[2] == this->last_sent_seq_) ? 1 : 0;
+            ESP_LOGI(TAG, "BLE response %s sequence byte", this->seq_echo_state_ ? "echoes" : "does not echo");
+          }
+          if (this->seq_echo_state_ == 1 && pData[2] != this->last_sent_seq_) {
+            ESP_LOGD(TAG, "Dropping stale BLE notification (seq %u, expected %u)", pData[2], this->last_sent_seq_);
+            break;
+          }
+        }
+      }
+
+      this->waiting_message_ = false;
+      this->waiting_since_ = 0;
       ESP_LOGD(TAG, "BLE notify: length=%d, expected=%d", (int) length, this->total_registers_ + 7);
 
       // FC6 (write) acknowledgement: echo the request per Modbus/TCP so the
