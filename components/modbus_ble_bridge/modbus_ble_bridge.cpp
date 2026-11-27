@@ -7,6 +7,9 @@ namespace esphome {
 namespace modbus_ble_bridge {
 
 static const char *const TAG = "modbus_ble_bridge";
+// The dongle can keep the BLE link up while no longer notifying. Reconnect it
+// after a few consecutive response timeouts instead of waiting for a reboot.
+static constexpr uint8_t MAX_CONSECUTIVE_TIMEOUTS = 3;
 static constexpr uint16_t BLE_SERVICE = 0xFFFF;
 static constexpr uint16_t BLE_CHAR_READ = 0xFF02;
 static constexpr uint16_t BLE_CHAR_WRITE = 0xFF01;
@@ -43,6 +46,24 @@ void ModbusBleBridge::note_timeout_() {
   if (this->timeouts_sensor_ != nullptr)
     this->timeouts_sensor_->publish_state(this->total_timeouts_);
 #endif
+}
+
+void ModbusBleBridge::handle_ble_timeout_(const char *where) {
+  this->note_timeout_();
+  ESP_LOGW(TAG, "BLE response timeout after %u ms (%s). Resetting state.", (unsigned) this->ble_response_timeout_ms_, where);
+  this->waiting_message_ = false;
+  this->waiting_since_ = 0;
+  ESP_LOGI(TAG, "Closing TCP client due to BLE timeout (%s)", where);
+  this->close_client_();
+
+  this->consecutive_timeouts_++;
+  if (this->consecutive_timeouts_ >= MAX_CONSECUTIVE_TIMEOUTS) {
+    this->consecutive_timeouts_ = 0;
+    if (this->parent_ != nullptr) {
+      ESP_LOGW(TAG, "BLE dongle unresponsive after %u timeouts, reconnecting", MAX_CONSECUTIVE_TIMEOUTS);
+      this->parent_->disconnect();
+    }
+  }
 }
 
 void ModbusBleBridge::close_client_() {
@@ -147,12 +168,7 @@ void ModbusBleBridge::loop() {
   }
 
   if (this->waiting_message_ && this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
-    this->note_timeout_();
-    ESP_LOGW(TAG, "BLE response timeout after %u ms (loop). Resetting state.", (unsigned) this->ble_response_timeout_ms_);
-    this->waiting_message_ = false;
-    this->waiting_since_ = 0;
-    ESP_LOGI(TAG, "Closing TCP client due to BLE timeout (loop)");
-    this->close_client_();
+    this->handle_ble_timeout_("loop");
   }
   if (this->client_fd_ < 0) {
     sockaddr_in caddr{}; socklen_t clen = sizeof(caddr);
@@ -190,12 +206,7 @@ void ModbusBleBridge::handle_modbus_tcp() {
       this->last_wait_log_ = now;
     }
     if (this->waiting_since_ != 0 && (now - this->waiting_since_) > this->ble_response_timeout_ms_) {
-      this->note_timeout_();
-      ESP_LOGW(TAG, "BLE response timeout after %u ms. Resetting state.", (unsigned) this->ble_response_timeout_ms_);
-      this->waiting_message_ = false;
-      this->waiting_since_ = 0;
-      ESP_LOGI(TAG, "Closing TCP client due to BLE timeout while waiting");
-      this->close_client_();
+      this->handle_ble_timeout_("waiting");
     }
     return;
   }
@@ -317,6 +328,7 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       ESP_LOGI(TAG, "[gattc_event_handler] ESP_GATTC_OPEN_EVT");
       if (param->open.status == ESP_GATT_OK) {
         ESP_LOGI(TAG, "Connected successfully!");
+        this->consecutive_timeouts_ = 0;
       } else {
         ESP_LOGW(TAG, "Connection failed, status=%d", param->open.status);
       }
@@ -393,6 +405,7 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
         break;
       }
       this->errlen_ = 0;
+      this->consecutive_timeouts_ = 0;
 
       // Validate the payload byte count before reading it, so a bogus value
       // from the dongle can never read past the notification buffer.

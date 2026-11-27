@@ -44,6 +44,7 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   int c_ = 0;
   int total_calls_ = 0;
   int total_timeouts_ = 0;
+  uint8_t consecutive_timeouts_ = 0;
 #ifdef USE_MODBUS_BLE_BRIDGE_METRICS
   sensor::Sensor *total_requests_sensor_{nullptr};
   sensor::Sensor *timeouts_sensor_{nullptr};
@@ -63,6 +64,7 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   void close_client_();
   void note_request_();
   void note_timeout_();
+  void handle_ble_timeout_(const char *where);
   uint16_t modrtu_crc(const uint8_t *buf, int len);
 };
 
