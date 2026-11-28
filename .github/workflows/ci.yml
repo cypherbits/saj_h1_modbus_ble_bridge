@@ -86,7 +86,7 @@ jobs:
         if: always()
         run: |
           mkdir -p ci-results
-          printf '{"esphome_version":"%s","config":"%s","compile":"%s"}\n' \
+          printf '{"esphome_version":"%s","board":"esp32","config":"%s","compile":"%s"}\n' \
             "${{ matrix.esphome-version }}" \
             "${{ steps.validate.outcome }}" \
             "${{ steps.compile.outcome }}" \
@@ -100,11 +100,69 @@ jobs:
           path: ci-results/result-${{ matrix.esphome-version }}.json
           if-no-files-found: ignore
 
+  build-c3:
+    name: Build ESP32-C3 (ESPHome ${{ matrix.esphome-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The production board is an ESP32-C3. Compile the newest supported
+        # releases to cover the RISC-V toolchain and C3-specific BLE paths.
+        esphome-version:
+          - "2026.10.2"
+          - "2026.11.1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache ESP-IDF framework
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/esphome/idf
+          key: idf-c3-${{ runner.os }}-${{ matrix.esphome-version }}-${{ hashFiles('tests/*.yaml') }}
+          restore-keys: |
+            idf-c3-${{ runner.os }}-${{ matrix.esphome-version }}-
+
+      - name: Install ESPHome ${{ matrix.esphome-version }}
+        run: pip install --disable-pip-version-check "esphome==${{ matrix.esphome-version }}"
+
+      - name: Validate C3 configuration
+        id: validate
+        run: esphome config tests/test_c3.yaml
+
+      - name: Compile C3 firmware
+        id: compile
+        run: esphome compile tests/test_c3.yaml
+
+      - name: Record result
+        if: always()
+        run: |
+          mkdir -p ci-results
+          printf '{"esphome_version":"%s","board":"esp32-c3","config":"%s","compile":"%s"}\n' \
+            "${{ matrix.esphome-version }}" \
+            "${{ steps.validate.outcome }}" \
+            "${{ steps.compile.outcome }}" \
+            > "ci-results/result-c3-${{ matrix.esphome-version }}.json"
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-c3-${{ matrix.esphome-version }}
+          path: ci-results/result-c3-${{ matrix.esphome-version }}.json
+          if-no-files-found: ignore
+
   report:
     name: Report
     runs-on: ubuntu-latest
     needs:
       - build
+      - build-c3
     if: always()
     permissions:
       contents: read
@@ -133,7 +191,8 @@ jobs:
                 const result = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
                 const icon = (status) => (status === 'success' ? '✅' : '❌');
                 const cell = (status) => icon(status) + ' ' + (status || 'skipped');
-                rows.push(`| \`${result.esphome_version}\` | ${cell(result.config)} | ${cell(result.compile)} |`);
+                const board = result.board || 'esp32';
+                rows.push(`| \`${result.esphome_version}\` | ${board} | ${cell(result.config)} | ${cell(result.compile)} |`);
               }
             }
             rows.sort();
@@ -143,9 +202,9 @@ jobs:
               marker,
               '### ESPHome build report',
               '',
-              '| ESPHome | Config | Compile |',
-              '| ------- | ------ | ------- |',
-              ...(rows.length ? rows : ['| — | — | ❌ no results |']),
+              '| ESPHome | Board | Config | Compile |',
+              '| ------- | ----- | ------ | ------- |',
+              ...(rows.length ? rows : ['| — | — | — | ❌ no results |']),
             ].join('\n');
 
             const { owner, repo } = context.repo;

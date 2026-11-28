@@ -5,7 +5,7 @@ ESPHome external component that exposes the SAJ H1-*-S2 inverter Modbus register
 Designed for inverters that only provide local Bluetooth access (no LAN API) so you can query them from Home Assistant or any Modbus/TCP client (Node-RED, Python, etc.).
 
 ## Status / Compatibility
-Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x, 2026.6.x, 2026.7.x, 2026.8.x, 2026.9.x, 2026.10.x and 2026.11.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4, 2026.8.2, 2026.9.1, 2026.10.2 and 2026.11.1).
+Compatible with ESPHome 2025.9.x, 2025.10.x, 2025.11.x, 2025.12.x, 2026.1.x, 2026.2.x, 2026.3.x, 2026.4.x, 2026.5.x, 2026.6.x, 2026.7.x, 2026.8.x, 2026.9.x, 2026.10.x and 2026.11.x (CI builds against 2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4, 2026.8.2, 2026.9.1, 2026.10.2 and 2026.11.1, plus ESP32-C3 builds on 2026.10.2 and 2026.11.1).
 Requires the ESP32 **ESP-IDF** framework (Arduino is not supported). The network server is implemented directly on lwIP sockets.  
 Not validated together with other active BLE clients; feedback welcome.
 
@@ -16,7 +16,9 @@ components/
     __init__.py            Python registration & schema
     modbus_ble_bridge.h/.cpp C++ implementation
 tests/
-  test.yaml                Device config used by CI to validate & compile the component
+  test.yaml                ESP32 device config used by CI
+  test_no_metrics.yaml     ESP32 config without the optional metric sensors
+  test_c3.yaml             ESP32-C3 device config used by CI
 .github/workflows/ci.yml   CI pipeline
 README.md
 ```
@@ -96,15 +98,20 @@ Notes:
 dependency of this component.
 
 ## Continuous Integration
-Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3`, `2026.6.5`, `2026.7.4`, `2026.8.2`, `2026.9.1`, `2026.10.2` and `2026.11.1`) using the device config in `tests/test.yaml`:
+Every pull request runs the [CI workflow](.github/workflows/ci.yml), which builds the component against each supported ESPHome version (currently `2025.9.3`, `2025.10.4`, `2025.11.5`, `2025.12.7`, `2026.1.5`, `2026.2.4`, `2026.3.3`, `2026.4.5`, `2026.5.3`, `2026.6.5`, `2026.7.4`, `2026.8.2`, `2026.9.1`, `2026.10.2` and `2026.11.1`):
 
-1. `esphome config tests/*.yaml` — validates the YAML schema and component registration.
-2. `esphome compile tests/*.yaml` — compiles the firmware for ESP32 (ESP-IDF).
+1. `esphome config tests/test.yaml` and `esphome config tests/test_no_metrics.yaml` — validate the YAML schema and component registration for ESP32.
+2. `esphome compile tests/test.yaml` and `esphome compile tests/test_no_metrics.yaml` — compile the ESP32 (ESP-IDF) firmware.
+3. `esphome config tests/test_c3.yaml` and `esphome compile tests/test_c3.yaml` — build the ESP32-C3 firmware on 2026.10.2 and 2026.11.1.
 
 `tests/test.yaml` configures the metric sensors; `tests/test_no_metrics.yaml` does not,
-so CI covers both branches of the conditional `AUTO_LOAD`.
+so CI covers both branches of the conditional `AUTO_LOAD`. The ESP32-C3 job covers the
+RISC-V toolchain and the C3-specific BLE paths.
 
-The workflow posts a build report comment on the pull request. To make the pipeline mandatory for merging, enable branch protection on `main` and mark the **Build** and **Report** checks as *required* (Settings → Branches → Branch protection rules).
+The workflow posts a build report comment on the pull request, including the board
+column. To make the pipeline mandatory for merging, enable branch protection on `main`
+and mark the **Build**, **Build ESP32-C3** and **Report** checks as *required*
+(Settings → Branches → Branch protection rules).
 
 To reproduce locally:
 
@@ -112,8 +119,12 @@ To reproduce locally:
 # Repeat with each supported version (2025.9.3, 2025.10.4, 2025.11.5, 2025.12.7, 2026.1.5, 2026.2.4, 2026.3.3, 2026.4.5, 2026.5.3, 2026.6.5, 2026.7.4, 2026.8.2, 2026.9.1, 2026.10.2 and 2026.11.1).
 pip install "esphome==2026.11.1"
 esphome config tests/test.yaml
+esphome config tests/test_no_metrics.yaml
 esphome compile tests/test.yaml
 esphome compile tests/test_no_metrics.yaml
+# ESP32-C3 (2026.10.2 and 2026.11.1)
+esphome config tests/test_c3.yaml
+esphome compile tests/test_c3.yaml
 ```
 
 ## Thanks
