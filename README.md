@@ -51,7 +51,8 @@ ble_client:
 ```yaml
 modbus_ble_bridge:
   ble_client_id: saj_ble
-  modbus_port: 502   # Optional (default 502)
+  modbus_port: 502        # Optional (default 502)
+  ble_response_timeout: 5s  # Optional (default 5s)
   # Optional metric sensors (omit all of them for zero overhead):
   total_requests:
     name: "Bridge Requests"
@@ -124,7 +125,7 @@ Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 * TCP keepalive (10 s idle, 3 probes every 5 s), `TCP_NODELAY` and a 60 s idle timeout are enabled on accepted clients, so vanished peers are detected and dropped without rebooting the ESP32.
 * Only function code 3 (read holding registers, max 125) and 6 (write single register) are tunnelled. Any other function code, a malformed MBAP header or an invalid register count is answered with a Modbus exception.
 * Writes (FC 6) are acknowledged with the standard Modbus/TCP echo response.
-* The BLE response timeout is currently fixed in code (2s). If needed this can be exposed later via YAML.
+* The BLE response timeout defaults to 5 s and can be changed with `ble_response_timeout`. Keep it below the Modbus client timeout so the bridge closes a failed request before the client gives up.
 
 ## Troubleshooting
 * If you see "BLE write characteristic not found": ensure you paired the correct dongle MAC.
@@ -132,7 +133,6 @@ Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 * Repeated length errors (>5) force the TCP client to close; retry from the client side.
 
 ## Roadmap / TODO
-* Expose BLE response timeout as a config option.
 * Provide Node-RED example flow.
 
 ## Implementation notes
