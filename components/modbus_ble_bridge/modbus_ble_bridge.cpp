@@ -357,7 +357,7 @@ bool ModbusBleBridge::send_ble_request(uint8_t *data, size_t len) {
     }
     ESP_LOGD(TAG, "BLE write characteristic acquired");
   }
-  esp_err_t err = this->char_write_->write_value(data, static_cast<int16_t>(len), ESP_GATT_WRITE_TYPE_NO_RSP);
+  esp_err_t err = this->char_write_->write_value(data, static_cast<int16_t>(len), ESP_GATT_WRITE_TYPE_RSP);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "BLE write_value failed, status=%d", err);
     return false;
@@ -414,6 +414,22 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
     }
     case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
       ESP_LOGI(TAG, "[gattc_event_handler] ESP_GATTC_REG_FOR_NOTIFY_EVT");
+      break;
+    }
+    case ESP_GATTC_WRITE_CHAR_EVT: {
+      if (this->char_write_ == nullptr || param->write.handle != this->char_write_->handle)
+        break;
+      if (param->write.status == ESP_GATT_OK) {
+        ESP_LOGV(TAG, "BLE write acknowledged");
+        break;
+      }
+      ESP_LOGW(TAG, "BLE write failed, status=%d", param->write.status);
+      if (this->waiting_message_) {
+        this->waiting_message_ = false;
+        this->waiting_since_ = 0;
+        this->send_exception_(this->modbus_frame_response_[7], 0x0B);
+      }
+      this->close_client_();
       break;
     }
     case ESP_GATTC_NOTIFY_EVT: {
