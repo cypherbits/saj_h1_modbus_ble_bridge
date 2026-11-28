@@ -37,6 +37,7 @@ void ModbusBleBridge::setup() {
   this->c_ = 0;
   this->total_calls_ = 0;
   this->total_timeouts_ = 0;
+  this->node_state = esp32_ble_tracker::ClientState::IDLE;
 }
 
 void ModbusBleBridge::note_request_() {
@@ -413,6 +414,16 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       break;
     }
     case ESP_GATTC_DISCONNECT_EVT: {
+      // ESPHome ignores a disconnect from the previous link in BLEClientBase,
+      // but it still forwards the event to every node. Closing the current
+      // connection and dropping the characteristics for a stale event would
+      // leave a new link without notifications.
+      if (this->node_state != esp32_ble_tracker::ClientState::DISCONNECTING &&
+          this->node_state != esp32_ble_tracker::ClientState::IDLE) {
+        ESP_LOGD(TAG, "Ignoring stale BLE disconnect event (state=%s)",
+                 esp32_ble_tracker::client_state_to_string(this->node_state));
+        break;
+      }
       ESP_LOGI(TAG, "[gattc_event_handler] ESP_GATTC_DISCONNECT_EVT");
       this->char_read_ = nullptr;
       this->char_write_ = nullptr;
