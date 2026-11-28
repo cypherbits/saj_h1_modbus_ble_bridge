@@ -1,0 +1,42 @@
+# ESP32-C3 build used by CI. The production device is an ESP32-C3, so this
+# config exercises the RISC-V ESP-IDF toolchain and the C3-specific BLE paths.
+# It is never flashed; the MAC address is a placeholder.
+esphome:
+  name: modbus-ble-bridge-c3-test
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: ci-test
+  password: ci-test-password
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components:
+      - modbus_ble_bridge
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 3500ms
+    window: 1100ms
+    active: true
+
+ble_client:
+  - mac_address: 00:00:00:00:00:00
+    id: test_ble_client
+
+modbus_ble_bridge:
+  ble_client_id: test_ble_client
+  modbus_port: 502
+  ble_response_timeout: 5s
+  total_requests:
+    name: Bridge Requests
+  timeouts:
+    name: Bridge Timeouts
