@@ -21,12 +21,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Supported ESPHome versions. Add new releases here as support grows.
+        # Supported ESPHome versions. Only 2026.x releases are tested; older
+        # versions may still work but are not supported.
         esphome-version:
-          - "2025.9.3"
-          - "2025.10.4"
-          - "2025.11.5"
-          - "2025.12.7"
           - "2026.1.5"
           - "2026.2.4"
           - "2026.3.3"
