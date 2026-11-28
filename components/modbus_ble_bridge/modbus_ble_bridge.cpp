@@ -306,6 +306,14 @@ void ModbusBleBridge::handle_modbus_tcp() {
       this->send_exception_(fn_code, 0x03);  // illegal data value
       return;
     }
+    // BLE notification: 7-byte header + byte count + 2 bytes/register + CRC.
+    // It must fit in the ATT payload, which is MTU - 3.
+    int needed_mtu = num_regs * 2 + 13;
+    if (this->mtu_ != 0 && needed_mtu > this->mtu_) {
+      ESP_LOGW(TAG, "Read of %d registers needs MTU %d, negotiated %u, sending exception", num_regs, needed_mtu, this->mtu_);
+      this->send_exception_(fn_code, 0x04);  // server device failure
+      return;
+    }
     this->total_registers_ = num_regs * 2 + 3;
   }
 
@@ -384,7 +392,12 @@ void ModbusBleBridge::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_i
       break;
     }
     case ESP_GATTC_CFG_MTU_EVT: {
-      ESP_LOGD(TAG, "[gattc_event_handler] ESP_GATTC_CFG_MTU_EVT: MTU updated to %d", param->cfg_mtu.mtu);
+      if (param->cfg_mtu.status == ESP_GATT_OK) {
+        this->mtu_ = param->cfg_mtu.mtu;
+        ESP_LOGI(TAG, "BLE MTU updated to %u", this->mtu_);
+      } else {
+        ESP_LOGW(TAG, "BLE MTU negotiation failed, status=%d", param->cfg_mtu.status);
+      }
       break;
     }
     case ESP_GATTC_DISCONNECT_EVT: {
