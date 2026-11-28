@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, STATE_CLASS_TOTAL_INCREASING
-from esphome.components import sensor
+from esphome.components import network, sensor
 from esphome.components.ble_client import CONF_BLE_CLIENT_ID, BLEClient
 import esphome.components.ble_client as ble_client
 from esphome.config_validation import positive_int
@@ -43,24 +43,35 @@ def AUTO_LOAD(config=None):
 # RAM or runtime cost, since the whole code path is excluded at compile time.
 METRICS_DEFINE = "USE_MODBUS_BLE_BRIDGE_METRICS"
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(ModbusBleBridge),
-        cv.Required(CONF_BLE_CLIENT_ID): cv.use_id(BLEClient),
-        cv.Optional(CONF_MODBUS_PORT, default=502): positive_int,
-        cv.Optional(CONF_BLE_RESPONSE_TIMEOUT, default="5000ms"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_TOTAL_REQUESTS): sensor.sensor_schema(
-            icon="mdi:counter",
-            accuracy_decimals=0,
-            state_class=STATE_CLASS_TOTAL_INCREASING,
-        ),
-        cv.Optional(CONF_TIMEOUTS): sensor.sensor_schema(
-            icon="mdi:alert-circle-outline",
-            accuracy_decimals=0,
-            state_class=STATE_CLASS_TOTAL_INCREASING,
-        ),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+def _require_ipv4(config):
+    # The Modbus/TCP server uses IPv4 sockets. network.require_ipv4 was added
+    # in ESPHome 2026.11; older releases do not have it.
+    if hasattr(network, "require_ipv4"):
+        return network.require_ipv4("modbus_ble_bridge")(config)
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(ModbusBleBridge),
+            cv.Required(CONF_BLE_CLIENT_ID): cv.use_id(BLEClient),
+            cv.Optional(CONF_MODBUS_PORT, default=502): positive_int,
+            cv.Optional(CONF_BLE_RESPONSE_TIMEOUT, default="5000ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_TOTAL_REQUESTS): sensor.sensor_schema(
+                icon="mdi:counter",
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+            ),
+            cv.Optional(CONF_TIMEOUTS): sensor.sensor_schema(
+                icon="mdi:alert-circle-outline",
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    _require_ipv4,
+)
 
 
 def to_code(config):

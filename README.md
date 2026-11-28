@@ -126,6 +126,7 @@ Big thanks to https://t.me/saj_nooficialoriginal Telegram group.
 * Only function code 3 (read holding registers, max 125) and 6 (write single register) are tunnelled. Any other function code, a malformed MBAP header or an invalid register count is answered with a Modbus exception.
 * Writes (FC 6) are acknowledged with the standard Modbus/TCP echo response.
 * The BLE response timeout defaults to 5 s and can be changed with `ble_response_timeout`. Keep it below the Modbus client timeout so the bridge closes a failed request before the client gives up.
+* The Modbus/TCP server uses IPv4. On ESPHome 2026.11+ `network: enable_ipv4: false` is rejected at validation time instead of failing at runtime.
 
 ## Troubleshooting
 * If you see "BLE write characteristic not found": ensure you paired the correct dongle MAC.
