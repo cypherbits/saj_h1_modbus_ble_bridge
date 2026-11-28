@@ -42,6 +42,9 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   int total_registers_ = 0;
   int errlen_ = 0;
   int c_ = 0;
+  uint8_t last_sent_seq_ = 0;
+  // -1: not learned yet, 0: dongle does not echo the sequence byte, 1: it does.
+  int8_t seq_echo_state_ = -1;
   int total_calls_ = 0;
   int total_timeouts_ = 0;
 #ifdef USE_MODBUS_BLE_BRIDGE_METRICS
