@@ -49,6 +49,7 @@ class ModbusBleBridge : public Component, public ble_client::BLEClientNode {
   sensor::Sensor *timeouts_sensor_{nullptr};
 #endif
   unsigned long last_wifi_check_ = 0;
+  unsigned long last_rx_ = 0;
   bool waiting_message_ = false;
   unsigned long waiting_since_ = 0;
   unsigned long last_wait_log_ = 0;
